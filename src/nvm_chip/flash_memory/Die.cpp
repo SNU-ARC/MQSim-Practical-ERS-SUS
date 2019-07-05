@@ -13,6 +13,8 @@ namespace NVM
 			Planes = new Plane*[PlanesNoPerDie];
 			for (unsigned int i = 0; i < PlanesNoPerDie; i++)
 				Planes[i] = new Plane(BlocksNoPerPlane, PagesNoPerBlock);
+
+			PrevERSRemainingSuspendedExecTime = INVALID_TIME;
 		}
 
 		Die::~Die()

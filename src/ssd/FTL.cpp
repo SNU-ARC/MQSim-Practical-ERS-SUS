@@ -44,6 +44,8 @@ namespace SSD_Components
 		if (this->GC_and_WL_Unit == NULL)
 			throw std::logic_error("The garbage collector is not set for FTL!");
 	}
+
+#pragma optimize("t",on)	
 	void FTL::Perform_precondition(std::vector<Utils::Workload_Statistics*> workload_stats)
 	{
 		Address_Mapping_Unit->Store_mapping_table_on_flash_at_start();
@@ -82,7 +84,14 @@ namespace SSD_Components
 			LPA_type no_of_logical_pages_in_steadystate = (LPA_type)(stat->Initial_occupancy_ratio * Address_Mapping_Unit->Get_logical_pages_count(stat->Stream_id));
 
 			//Step 1: generate LPAs that are accessed in the steady-state
+//			Utils::Address_Distribution_Type decision_dist_type = stat->Address_distribution_type;
+#if (SET_PRECONDION_TO_UNIFORM_RND)
+			Utils::Address_Distribution_Type decision_dist_type = Utils::Address_Distribution_Type::RANDOM_UNIFORM; // The workload for pre-condition fix to sequential write.
+#elif (ACT_SIMULATION)
+			Utils::Address_Distribution_Type decision_dist_type = Utils::Address_Distribution_Type::RANDOM_UNIFORM;
+#else
 			Utils::Address_Distribution_Type decision_dist_type = stat->Address_distribution_type;
+#endif
 			std::map<LPA_type, page_status_type> lpa_set_for_preconditioning;//Stores the accessed LPAs
 			std::multimap<int, LPA_type, std::greater<int>> trace_lpas_sorted_histogram;//only used for trace workloads
 			unsigned int hot_region_last_index_in_histogram = 0;//only used for trace workloads to detect hot addresses
@@ -766,7 +775,9 @@ namespace SSD_Components
 			}
 		}
 	}
-	
+
+#pragma optimize("t",off)
+
 	void FTL::Report_results_in_XML(std::string name_prefix, Utils::XmlWriter& xmlwriter)
 	{
 		std::string tmp = name_prefix + ".FTL";

@@ -46,9 +46,12 @@ namespace SSD_Components
 		Flash_Transaction_Queue** MappingReadTRQueue;
 		Flash_Transaction_Queue** MappingWriteTRQueue;
 
-		bool service_read_transaction(NVM::FlashMemory::Flash_Chip* chip);
+		bool check_user_read_transaction(NVM::FlashMemory::Flash_Chip* chip);
+		bool service_read_transaction(NVM::FlashMemory::Flash_Chip* chip, bool bUserReadOnlySchedule);
 		bool service_write_transaction(NVM::FlashMemory::Flash_Chip* chip);
 		bool service_erase_transaction(NVM::FlashMemory::Flash_Chip* chip);
+
+		uint64_t UrgentGCWriteSchCount[4][4];
 	};
 }
 

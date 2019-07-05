@@ -95,6 +95,8 @@ namespace SSD_Components
 		unsigned int block_no_per_plane;
 		unsigned int pages_no_per_block;
 		unsigned int sector_no_per_page;
+
+		unsigned int DebugMinFreeBlockCount[4][4][8];
 	};
 }
 

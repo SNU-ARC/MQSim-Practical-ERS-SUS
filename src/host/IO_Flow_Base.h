@@ -50,7 +50,10 @@ namespace Host_Components
 		~IO_Flow_Base();
 		void Start_simulation();
 		IO_Flow_Priority_Class Priority_class() { return priority_class; }
-		virtual Host_IO_Request* Generate_next_request() = 0;
+		virtual Host_IO_Request* Generate_next_request() = 0;		
+		virtual Host_IO_Request* Generate_next_request(bool bGenRead) = 0;
+		virtual Host_IO_Request* Generate_next_request(bool bGenRead, unsigned int nLBA_count) = 0;
+
 		virtual void NVMe_consume_io_request(Completion_Queue_Entry*);
 		Submission_Queue_Entry* NVMe_read_sqe(uint64_t address);
 		const NVMe_Queue_Pair* Get_nvme_queue_pair_info();
@@ -112,6 +115,8 @@ namespace Host_Components
 		sim_time_type next_logging_milestone;
 		std::string logging_file_path;
 		std::ofstream log_file;
+		std::ofstream read_log_file;
+		std::ofstream write_log_file;
 		uint32_t Get_device_response_time_short_term();//in microseconds
 		uint32_t Get_end_to_end_request_delay_short_term();//in microseconds
 		sim_time_type STAT_sum_device_response_time_short_term, STAT_sum_request_delay_short_term;

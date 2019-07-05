@@ -56,16 +56,19 @@ namespace SSD_Components
 		unsigned int chip_no_per_channel;
 		unsigned int die_no_per_chip;
 		unsigned int plane_no_per_die;
-		bool eraseSuspensionEnabled, programSuspensionEnabled;
+		bool eraseSuspensionEnabled;
 		sim_time_type writeReasonableSuspensionTimeForRead;
 		sim_time_type eraseReasonableSuspensionTimeForRead;//the time period 
 		sim_time_type eraseReasonableSuspensionTimeForWrite;
 		flash_chip_ID_type* Round_robin_turn_of_channel;//Used for round-robin service of the chips in channels
 
+		bool programSuspensionEnabled;
+
 		static TSU_Base* _my_instance;
 		std::list<NVM_Transaction_Flash*> transaction_receive_slots;//Stores the transactions that are received for sheduling
 		std::list<NVM_Transaction_Flash*> transaction_dispatch_slots;//Used to submit transactions to the channel controller
-		virtual bool service_read_transaction(NVM::FlashMemory::Flash_Chip* chip) = 0;
+		virtual bool check_user_read_transaction(NVM::FlashMemory::Flash_Chip* chip) = 0;
+		virtual bool service_read_transaction(NVM::FlashMemory::Flash_Chip* chip, bool bUserReadOnlySchedule) = 0;
 		virtual bool service_write_transaction(NVM::FlashMemory::Flash_Chip* chip) = 0;
 		virtual bool service_erase_transaction(NVM::FlashMemory::Flash_Chip* chip) = 0;
 		static void handle_transaction_serviced_signal_from_PHY(NVM_Transaction_Flash* transaction);

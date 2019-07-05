@@ -9,6 +9,7 @@
 #include "exec/Host_System.h"
 #include "utils/rapidxml/rapidxml.hpp"
 #include "utils/DistributionTypes.h"
+#include <sstream>
 
 using namespace std;
 
@@ -283,15 +284,43 @@ void print_help()
 int main(int argc, char* argv[])
 {
 	string ssd_config_file_path, workload_defs_file_path;
-	if (argc != 5)
+#if (ACT_SIMULATION)
+	if (argc < 7)
+#elif (ERS_CANCEL_TO_ENABLE)
+	if (argc < 6)
+#else
+	if (argc < 5 ) 
+#endif
 	{
 		// MQSim expects 2 arguments: 1) the path to the SSD configuration definition file, and 2) the path to the workload definition file
 		print_help();
 		return 1;
 	}
 
-	command_line_args(argv, ssd_config_file_path, workload_defs_file_path);
 
+#if (ERS_CANCEL_TO_ENABLE)	
+	{
+		std::stringstream ss(argv[5]);
+		if ((ss >> ERS_SUS_TO_Time_MS).fail())
+		{
+			print_help();
+			return 1;
+		}
+	}
+#endif
+
+#if (ACT_SIMULATION)
+	{
+		std::stringstream ss(argv[6]);
+		if ((ss >> ACT_MAG_COUNT).fail())
+		{
+			print_help();
+			return 1;
+		}
+	}
+#endif
+
+	command_line_args(argv, ssd_config_file_path, workload_defs_file_path);	
 	
 	Execution_Parameter_Set* exec_params = new Execution_Parameter_Set;
 	read_configuration_parameters(ssd_config_file_path, exec_params);
@@ -303,8 +332,31 @@ int main(int argc, char* argv[])
 		time_t start_time = time(0);
 		char* dt = ctime(&start_time);
 		PRINT_MESSAGE("MQSim started at " << dt)
-		PRINT_MESSAGE("******************************")
-		PRINT_MESSAGE("Executing scenario " << cntr << " out of " << io_scenarios->size() << " .......")
+			PRINT_MESSAGE("******************************")
+			PRINT_MESSAGE("Executing scenario " << cntr << " out of " << io_scenarios->size() << " .......")
+
+		std::cout << "MULTI_PROCESS_IO_GEN: " << ((MULTI_PROCESS_IO_GEN) ? "TRUE" : "FALSE") << std::endl;
+		std::cout << "ACT_SIM: " << ((ACT_SIMULATION) ? "TRUE" : "FALSE") << std::endl;
+		std::cout << "ERS_CANCEL_ENABLE: " << ((ERS_CANCEL_ENABLE) ? "TRUE" : "FALSE") << std::endl;
+		std::cout << "ERS_CANCEL_TO_ENABLE: " << ((ERS_CANCEL_TO_ENABLE) ? "TRUE" : "FALSE") << std::endl;
+		std::cout << "ERS_DEFER_SUS_ENABLE: " << ((ERS_DEFER_SUS_ENABLE) ? "TRUE" : "FALSE") << std::endl;
+		std::cout << "ERS_IDEAL_SUS_ENABLE: " << ((ERS_IDEAL_SUS_ENABLE) ? "TRUE" : "FALSE") << std::endl;
+
+
+#if (ERS_CANCEL_TO_ENABLE)	
+		PRINT_MESSAGE("Write CMD T/O set to " << ERS_SUS_TO_Time_MS << "ms");
+	#if (ERS_DEFER_SUS_ENABLE)
+		if (ERS_SUS_TO_Time_MS == 0)
+		{
+			gnERSSuspendOffCount = 0xFFFF;
+		}
+	#endif
+#endif
+
+#if (ACT_SIMULATION)
+		PRINT_MESSAGE("ACT Mag set to " << ACT_MAG_COUNT );
+		assert (ACT_MAG_COUNT > 0);
+#endif
 
 		//The simulator should always be reset, before starting the actual simulation
 		Simulator->Reset();
@@ -326,6 +378,16 @@ int main(int argc, char* argv[])
 		uint64_t duration = (uint64_t)difftime(end_time, start_time);
 		PRINT_MESSAGE("Total simulation time: " << duration / 3600 << ":" << (duration % 3600) / 60 << ":" << ((duration % 3600) % 60))
 		PRINT_MESSAGE("");
+
+		for (int i =0; i < 20 ; i++)
+		{
+			std::cout << "Def Suspension Info" << std::endl;
+			std::cout <<	gnErsSusToCount[i] << std::endl;
+		}
+
+		std::cout << "gnERSCancelCount: " << gnERSSusCount << std::endl;
+		std::cout << "gnDefERSCount: " << gnDefERSCount << std::endl;
+		std::cout << "gnTotalERSCount: " << gnTotalERSCount << std::endl;
 
 		PRINT_MESSAGE("Writing results to output file .......");
 		collect_results(ssd, host, (workload_defs_file_path.substr(0, workload_defs_file_path.find_last_of(".")) + "_scenario_" + std::to_string(cntr) + ".xml").c_str());

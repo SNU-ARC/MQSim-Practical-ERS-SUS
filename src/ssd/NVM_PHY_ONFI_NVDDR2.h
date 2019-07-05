@@ -38,6 +38,9 @@ namespace SSD_Components
 		sim_time_type RemainingExecTime;
 		sim_time_type DieInterleavedTime;//If the command transfer is done in die-interleaved mode, the transfer time is recorded in this temporary variable
 
+		bool ERS_SuspendTrigger;
+		bool PGM_SuspendTrigger;
+		
 		void PrepareSuspend()
 		{
 			SuspendedCommand = ActiveCommand;
@@ -92,6 +95,10 @@ namespace SSD_Components
 		void Validate_simulation_config();
 		void Start_simulation();
 
+
+		bool Check_PGM_suspend_threshold(flash_channel_ID_type channe_id, flash_chip_ID_type chip_id, flash_die_ID_type die_id); 		
+		bool Check_ERS_suspend_threshold(flash_channel_ID_type channe_id, flash_chip_ID_type chip_id, flash_die_ID_type die_id); 
+
 		void Send_command_to_chip(std::list<NVM_Transaction_Flash*>& transactionList);
 		void Change_flash_page_status_for_preconditioning(const NVM::FlashMemory::Physical_Page_Address& page_address, const LPA_type lpa);
 		void Execute_simulator_event(MQSimEngine::Sim_Event*);
@@ -106,6 +113,14 @@ namespace SSD_Components
 		NVM_Transaction_Flash* Is_chip_busy_with_stream(NVM_Transaction_Flash* transaction);
 		bool Is_chip_busy(NVM_Transaction_Flash* transaction);
 		void Change_memory_status_preconditioning(const NVM::NVM_Memory_Address* address, const void* status_info);
+
+		void SetTRQueue( Flash_Transaction_Queue** userReadTRQueue,
+							Flash_Transaction_Queue** UserWriteTRQueue,
+							Flash_Transaction_Queue** GCReadTRQueue,
+							Flash_Transaction_Queue** GCWriteTRQueue,
+							Flash_Transaction_Queue** GCEraseTRQueue,
+							Flash_Transaction_Queue** MappingReadTRQueue,
+							Flash_Transaction_Queue** MappingWriteTRQueue );
 	private:
 		void transfer_read_data_from_chip(ChipBookKeepingEntry* chipBKE, DieBookKeepingEntry* dieBKE, NVM_Transaction_Flash* tr);
 		void perform_interleaved_cmd_data_transfer(NVM::FlashMemory::Flash_Chip* chip, DieBookKeepingEntry* bookKeepingEntry);
@@ -117,6 +132,16 @@ namespace SSD_Components
 		ChipBookKeepingEntry** bookKeepingTable;
 		Flash_Transaction_Queue *WaitingReadTX, *WaitingGCRead_TX, *WaitingMappingRead_TX;
 		std::list<DieBookKeepingEntry*> *WaitingCopybackWrites;
+
+		Flash_Transaction_Queue** UserReadTRQueue;
+		Flash_Transaction_Queue** UserWriteTRQueue;
+		Flash_Transaction_Queue** GCReadTRQueue;
+		Flash_Transaction_Queue** GCWriteTRQueue;
+		Flash_Transaction_Queue** GCEraseTRQueue;
+		Flash_Transaction_Queue** MappingReadTRQueue;
+		Flash_Transaction_Queue** MappingWriteTRQueue;
+
+		
 	};
 }
 

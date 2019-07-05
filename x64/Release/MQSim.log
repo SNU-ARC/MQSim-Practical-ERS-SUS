@@ -1,0 +1,62 @@
+﻿  Device_Parameter_Set.cpp
+  Execution_Parameter_Set.cpp
+  Flash_Parameter_Set.cpp
+  Host_Parameter_Set.cpp
+  Host_System.cpp
+  IO_Flow_Parameter_Set.cpp
+  SSD_Device.cpp
+  IO_Flow_Base.cpp
+  IO_Flow_Synthetic.cpp
+  IO_Flow_Trace_Based.cpp
+  PCIe_Link.cpp
+  PCIe_Root_Complex.cpp
+  PCIe_Switch.cpp
+  SATA_HBA.cpp
+  main.cpp
+  Block.cpp
+  Die.cpp
+  Flash_Chip.cpp
+  Physical_Page_Address.cpp
+  Plane.cpp
+  Engine.cpp
+  EventTree.cpp
+  Address_Mapping_Unit_Base.cpp
+d:\mqsim-practical-ers-sus-master\src\nvm_chip\flash_memory\flash_chip.cpp(126): warning C4244: '초기화 중': 'sim_time_type'에서 'unsigned int'(으)로 변환하면서 데이터가 손실될 수 있습니다.
+  Address_Mapping_Unit_Hybrid.cpp
+  Address_Mapping_Unit_Page_Level.cpp
+  Data_Cache_Flash.cpp
+  Data_Cache_Manager_Base.cpp
+  Data_Cache_Manager_Flash_Advanced.cpp
+  Data_Cache_Manager_Flash_Simple.cpp
+  FTL.cpp
+  Flash_Block_Manager.cpp
+  Flash_Block_Manager_Base.cpp
+  Flash_Transaction_Queue.cpp
+  GC_and_WL_Unit_Base.cpp
+  GC_and_WL_Unit_Page_Level.cpp
+  Host_Interface_Base.cpp
+  Host_Interface_NVMe.cpp
+  Host_Interface_SATA.cpp
+  NVM_Firmware.cpp
+  NVM_PHY_Base.cpp
+  NVM_PHY_ONFI.cpp
+  NVM_PHY_ONFI_NVDDR2.cpp
+  NVM_Transaction_Flash.cpp
+  NVM_Transaction_Flash_ER.cpp
+  NVM_Transaction_Flash_RD.cpp
+  NVM_Transaction_Flash_WR.cpp
+  ONFI_Channel_Base.cpp
+  ONFI_Channel_NVDDR2.cpp
+  Queue_Probe.cpp
+  Stats.cpp
+  TSU_Base.cpp
+  TSU_OutofOrder.cpp
+  User_Request.cpp
+  Logical_Address_Partitioning_Unit.cpp
+  XMLWriter.cpp
+  코드를 생성하고 있습니다.
+  33 of 5950 functions ( 0.6%) were compiled, the rest were copied from previous compilation.
+    20 functions were new in current compilation
+    61 functions had inline decision re-evaluated but remain unchanged
+  코드를 생성했습니다.
+  MQSim.vcxproj -> D:\MQSim-Practical-ERS-SUS-master\\MQSim.exe

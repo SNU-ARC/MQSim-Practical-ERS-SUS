@@ -5,7 +5,7 @@
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LocalDebuggerCommandArguments>-i ssdconfig.xml -w workload.xml</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>-i .\atc19\Z-SSD_240GB-Config.xml -w .\atc19\WL_FIO_RND_4KB_Mixed_QD16.xml 00 00 </LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
 </Project>

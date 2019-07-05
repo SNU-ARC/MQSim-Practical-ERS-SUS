@@ -10,6 +10,7 @@ namespace Host_Components
 {
 	class IO_Flow_Synthetic : public IO_Flow_Base
 	{
+		enum class IO_Flow_Event_Type { ACT_LARGE_READ, ACT_SMALL_READ, ACT_LARGE_WRITE };
 	public:
 		IO_Flow_Synthetic(const sim_object_id_type& name, uint16_t flow_id, LHA_type start_lsa_on_device, LHA_type end_lsa_on_device, double working_set_ratio, uint16_t io_queue_id,
 			uint16_t nvme_submission_queue_size, uint16_t nvme_completion_queue_size, IO_Flow_Priority_Class priority_class,
@@ -21,6 +22,9 @@ namespace Host_Components
 			bool enabled_logging, sim_time_type logging_period, std::string logging_file_path);
 		~IO_Flow_Synthetic();
 		Host_IO_Request* Generate_next_request();
+		Host_IO_Request* Generate_next_request(bool bGenRead);
+		Host_IO_Request* Generate_next_request(bool bGenRead, unsigned int nLBA_count);
+		
 		void NVMe_consume_io_request(Completion_Queue_Entry*);
 		void SATA_consume_io_request(Host_IO_Request*);
 		void Start_simulation();

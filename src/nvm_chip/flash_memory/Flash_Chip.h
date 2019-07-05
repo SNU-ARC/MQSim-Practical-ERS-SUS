@@ -31,6 +31,13 @@ namespace NVM
 			flash_channel_ID_type ChannelID;
 			flash_chip_ID_type ChipID;         //Flashchip position in its related channel
 
+			unsigned int CurrentERSSuspendCount;
+			unsigned int MaxSuspendCount;
+			unsigned int Suspension_Dist[ERS_SUS_DIST_COUNT + 1];
+
+			sim_time_type ErsLoopBarrierTime;
+			sim_time_type PgmISPPRemainingTime;
+				
 			void StartCMDXfer()
 			{
 				this->lastTransferStart = Simulator->Time();
@@ -43,14 +50,14 @@ namespace NVM
 			{
 				this->lastTransferStart = Simulator->Time();
 			}
-			void EndCMDXfer(Flash_Command* command)//End transferring write data to the Flash chip
+			void EndCMDXfer(Flash_Command* command, sim_time_type suspendTime)//End transferring write data to the Flash chip
 			{
 				this->STAT_totalXferTime += (Simulator->Time() - this->lastTransferStart);
 				if (this->idleDieNo != die_no)
 					STAT_totalOverlappedXferExecTime += (Simulator->Time() - lastTransferStart);
 				this->Dies[command->Address[0].DieID]->STAT_TotalXferTime += (Simulator->Time() - lastTransferStart);
 
-				start_command_execution(command);
+				start_command_execution(command, suspendTime);
 
 				this->lastTransferStart = INVALID_TIME;
 			}
@@ -61,7 +68,7 @@ namespace NVM
 					STAT_totalOverlappedXferExecTime += (Simulator->Time() - lastTransferStart);
 				this->Dies[command->Address[0].DieID]->STAT_TotalXferTime += (Simulator->Time() - lastTransferStart);
 
-				start_command_execution(command);
+				start_command_execution(command, 0);
 
 				this->lastTransferStart = INVALID_TIME;
 			}
@@ -119,11 +126,14 @@ namespace NVM
 			sim_time_type GetSuspendEraseTime();
 			void Report_results_in_XML(std::string name_prefix, Utils::XmlWriter& xmlwriter);
 			LPA_type Get_metadata(flash_die_ID_type die_id, flash_plane_ID_type plane_id, flash_block_ID_type block_id, flash_page_ID_type page_id);//A simplification to decrease the complexity of GC execution! The GC unit may need to know the metadata of a page to decide if a page is valid or invalid. 
+
+			uint64_t UrgentGCWriteSchCount;
+			Die** Dies;
+
 		private:
 			Flash_Technology_Type flash_technology;
 			Internal_Status status;
 			unsigned int idleDieNo;
-			Die** Dies;
 			unsigned int die_no;
 			unsigned int plane_no_in_die;                  //indicate how many planes in a die
 			unsigned int block_no_in_plane;                //indicate how many blocks in a plane
@@ -138,10 +148,11 @@ namespace NVM
 			unsigned long STAT_totalSuspensionCount, STAT_totalResumeCount;
 			sim_time_type STAT_totalExecTime, STAT_totalXferTime, STAT_totalOverlappedXferExecTime;
 
-			void start_command_execution(Flash_Command* command);
+			void start_command_execution(Flash_Command* command, sim_time_type suspendTime);
 			void finish_command_execution(Flash_Command* command);
 			void broadcast_ready_signal(Flash_Command* command);
 			std::vector<ChipReadySignalHandlerType> connectedReadyHandlers;
+
 		};
 	}
 }

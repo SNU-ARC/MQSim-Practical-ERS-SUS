@@ -16,14 +16,38 @@
 #include "../ssd/NVM_PHY_ONFI_NVDDR2.h"
 #include "../utils/Logical_Address_Partitioning_Unit.h"
 
+
+#include "Host_System.h"
+#include "../ssd/Host_Interface_Base.h"
+#include "../ssd/Host_Interface_NVMe.h"
+
+#include <stdio.h>
+
 SSD_Device * SSD_Device::my_instance;//Used in static functions
+
+
+SSD_Device* gobjpSSDDevice;
+NVM::FlashMemory::Flash_Chip* gobjapFlashChip[16];
+SSD_Components::NVM_PHY_ONFI_NVDDR2* gobjpFMC;
+SSD_Components::FTL* gobjpFTL;
+SSD_Components::TSU_OutOfOrder* gobjpTSU;
+SSD_Components::Address_Mapping_Unit_Page_Level* gobjpMapping;
+SSD_Components::GC_and_WL_Unit_Page_Level* gobjpGCWL;
+SSD_Components::Data_Cache_Manager_Flash_Advanced* gobjpBufferCache;
+SSD_Components::Host_Interface_NVMe* gobjpNVMe;
+Host_System* gobjpHostSystem;
+Host_Components::PCIe_Link* gobjpPCIe;
+Host_Components::IO_Flow_Synthetic* gobjpWorkload;
+
 
 SSD_Device::SSD_Device(Device_Parameter_Set* parameters, std::vector<IO_Flow_Parameter_Set*>* io_flows) :
 	MQSimEngine::Sim_Object("SSDDevice")
 {
+
 	SSD_Device* device = this;
 	my_instance = device;//used for static functions
 	Simulator->AddObject(device);
+	gobjpSSDDevice = this;
 
 	device->Preconditioning_required = parameters->Enabled_Preconditioning;
 	device->Memory_Type = parameters->Memory_Type;
@@ -91,10 +115,12 @@ SSD_Device::SSD_Device(Device_Parameter_Set* parameters, std::vector<IO_Flow_Par
 						read_latencies, write_latencies, parameters->Flash_Parameters.Block_Erase_Latency,
 						parameters->Flash_Parameters.Suspend_Program_Time, parameters->Flash_Parameters.Suspend_Erase_Time);
 					Simulator->AddObject(chips[chip_cntr]);//Each simulation object (a child of MQSimEngine::Sim_Object) should be added to the engine
+					gobjapFlashChip[channel_cntr * parameters->Flash_Channel_Count + chip_cntr] = chips[chip_cntr];
+
 				}
 				channels[channel_cntr] = new SSD_Components::ONFI_Channel_NVDDR2(channel_cntr, parameters->Chip_No_Per_Channel,
 					chips, parameters->Flash_Channel_Width,
-					(sim_time_type)((double)1000 / parameters->Channel_Transfer_Rate) * 2, (sim_time_type)((double)1000 / parameters->Channel_Transfer_Rate) * 2);
+					(sim_time_type)((double)1000000 / parameters->Channel_Transfer_Rate) * 2, (sim_time_type)((double)1000000 / parameters->Channel_Transfer_Rate) * 2);
 				device->Channels.push_back(channels[channel_cntr]);//Channels should not be added to the simulator core, they are passive object that do not handle any simulation event
 			}
 
@@ -102,6 +128,9 @@ SSD_Device::SSD_Device(Device_Parameter_Set* parameters, std::vector<IO_Flow_Par
 			device->PHY = new SSD_Components::NVM_PHY_ONFI_NVDDR2(device->ID() + ".PHY", channels, parameters->Flash_Channel_Count, parameters->Chip_No_Per_Channel,
 				parameters->Flash_Parameters.Die_No_Per_Chip, parameters->Flash_Parameters.Plane_No_Per_Die);
 			Simulator->AddObject(device->PHY);
+			gobjpFMC = (SSD_Components::NVM_PHY_ONFI_NVDDR2*)device->PHY;
+
+
 			break;
 		}
 		default:
@@ -118,6 +147,8 @@ SSD_Device::SSD_Device(Device_Parameter_Set* parameters, std::vector<IO_Flow_Par
 			parameters->Flash_Parameters.Block_PE_Cycles_Limit, parameters->Seed++);
 		ftl->PHY = (SSD_Components::NVM_PHY_ONFI*)PHY;
 		Simulator->AddObject(ftl);
+		gobjpFTL = ftl;
+
 		device->Firmware = ftl;
 
 		//Step 5: create TSU
@@ -165,6 +196,8 @@ SSD_Device::SSD_Device(Device_Parameter_Set* parameters, std::vector<IO_Flow_Par
 			throw std::invalid_argument("No implementation is available for the specified transaction scheduling algorithm");
 		}
 		Simulator->AddObject(tsu);
+		gobjpTSU = (SSD_Components::TSU_OutOfOrder*)tsu;
+
 		ftl->TSU = tsu;
 
 		//Step 6: create Flash_Block_Manager
@@ -260,6 +293,8 @@ SSD_Device::SSD_Device(Device_Parameter_Set* parameters, std::vector<IO_Flow_Par
 			throw std::invalid_argument("No implementation is available fo the secified address mapping strategy");
 		}
 		Simulator->AddObject(amu);
+		gobjpMapping = (SSD_Components::Address_Mapping_Unit_Page_Level*)amu;
+
 		ftl->Address_Mapping_Unit = amu;
 
 		//Step 8: create GC_and_WL_unit
@@ -277,6 +312,8 @@ SSD_Device::SSD_Device(Device_Parameter_Set* parameters, std::vector<IO_Flow_Par
 			parameters->Flash_Parameters.Page_Capacity / SECTOR_SIZE_IN_BYTE, parameters->Use_Copyback_for_GC, max_rho, 10,
 			parameters->Seed++);
 		Simulator->AddObject(gcwl);
+		gobjpGCWL = (SSD_Components::GC_and_WL_Unit_Page_Level*)gcwl;
+
 		fbm->Set_GC_and_WL_Unit(gcwl);
 		ftl->GC_and_WL_Unit = gcwl;
 
@@ -301,12 +338,22 @@ SSD_Device::SSD_Device(Device_Parameter_Set* parameters, std::vector<IO_Flow_Par
 				parameters->Data_Cache_Capacity, parameters->Data_Cache_DRAM_Row_Size, parameters->Data_Cache_DRAM_Data_Rate,
 				parameters->Data_Cache_DRAM_Data_Busrt_Size, parameters->Data_Cache_DRAM_tRCD, parameters->Data_Cache_DRAM_tCL, parameters->Data_Cache_DRAM_tRP,
 				caching_modes, parameters->Data_Cache_Sharing_Mode, (unsigned int)io_flows->size(),
-				parameters->Flash_Parameters.Page_Capacity / SECTOR_SIZE_IN_BYTE, parameters->Flash_Channel_Count * parameters->Chip_No_Per_Channel * parameters->Flash_Parameters.Die_No_Per_Chip * parameters->Flash_Parameters.Plane_No_Per_Die * parameters->Flash_Parameters.Page_Capacity / SECTOR_SIZE_IN_BYTE);
+				parameters->Flash_Parameters.Page_Capacity / SECTOR_SIZE_IN_BYTE,
+				parameters->Flash_Channel_Count * parameters->Chip_No_Per_Channel * parameters->Flash_Parameters.Die_No_Per_Chip * parameters->Flash_Parameters.Plane_No_Per_Die * parameters->Flash_Parameters.Page_Capacity / SECTOR_SIZE_IN_BYTE * BACK_PRESSUER_BUF_MAG);
 
+			assert(parameters -> Flash_Parameters.Die_No_Per_Chip == 1);
+
+			static_cast<SSD_Components::Data_Cache_Manager_Flash_Advanced*>(dcm) -> init_write_stream_buffer(	parameters -> Flash_Channel_Count,
+																parameters -> Chip_No_Per_Channel,
+																parameters -> Flash_Parameters.Plane_No_Per_Die);
 			break;
 		default:
 			PRINT_ERROR("Unknown data caching mechanism!")
-		}		Simulator->AddObject(dcm);
+		}		
+		
+		Simulator->AddObject(dcm);
+		gobjpBufferCache = (SSD_Components::Data_Cache_Manager_Flash_Advanced*)dcm;
+
 		ftl->Data_cache_manager = dcm;
 		device->Cache_manager = dcm;
 
@@ -327,6 +374,8 @@ SSD_Device::SSD_Device(Device_Parameter_Set* parameters, std::vector<IO_Flow_Par
 			break;
 		}
 		Simulator->AddObject(device->Host_interface);
+		gobjpNVMe = (SSD_Components::Host_Interface_NVMe*)(device->Host_interface);
+
 		dcm->Set_host_interface(device->Host_interface);
 		break;
 	}

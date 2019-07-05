@@ -5,6 +5,18 @@
 #include "NVM_Transaction_Flash_WR.h"
 #include "FTL.h"
 
+#include <assert.h>
+
+
+
+extern size_t gnUserPGMPageIssueCount;
+extern size_t gnGCPGMPageIssueCount;
+extern size_t gnCurrentUserWriteIssueCount;
+extern size_t gnONFI_PGM_CompleteCount;
+extern size_t gnUserPageLockedCount;
+extern size_t gnUserpageLockedCount_Mapper;
+
+
 namespace SSD_Components
 {
 	Data_Cache_Manager_Flash_Advanced::Data_Cache_Manager_Flash_Advanced(const sim_object_id_type& id, Host_Interface_Base* host_interface, NVM_Firmware* firmware, NVM_PHY_ONFI* flash_controller,
@@ -87,6 +99,20 @@ namespace SSD_Components
 		delete[] dram_execution_queue;
 		delete[] waiting_user_requests_queue_for_dram_free_slot;
 		delete[] bloom_filter;
+
+	}
+
+	void Data_Cache_Manager_Flash_Advanced::init_write_stream_buffer(uint32_t _n_channels, uint32_t _n_chips_per_channel, uint32_t _n_planes_per_chip)
+	{
+		this -> n_channels = _n_channels;
+		this -> n_chips_per_channel = _n_chips_per_channel;
+		this -> n_planes_per_chip = _n_planes_per_chip;
+
+		assert(n_chip_buffers >= n_channels * n_chips_per_channel);
+		assert(n_planes_per_chip <= chip_buffer_size);
+
+		assert(!(back_pressure_buffer_max_depth % n_planes_per_chip));	//back pressure buffer should be
+		memset(chip_buffers, 0, sizeof(chip_buf) * n_channels * n_chips_per_channel);
 	}
 
 	void Data_Cache_Manager_Flash_Advanced::Setup_triggers()
@@ -210,12 +236,36 @@ namespace SSD_Components
 		if (user_request->Transaction_list.size() == 0)//This condition shouldn't happen, but we check it
 			return;
 
+
+#if (ERS_CANCEL_TO_ENABLE)
+		if (((Data_Cache_Manager_Flash_Advanced*)_my_instance)->waiting_user_requests_queue_for_dram_free_slot[user_request->Stream_id].size() > 0 )
+		{
+			auto pending_write_request = ((Data_Cache_Manager_Flash_Advanced*)_my_instance)->waiting_user_requests_queue_for_dram_free_slot[user_request->Stream_id].begin();
+			assert ((*pending_write_request)->Type == UserRequestType::WRITE);
+
+			if ( ( (Simulator->Time() - (*pending_write_request)->STAT_InitiationTime) / SIM_TIME_TO_MS_COEFF) >= ERS_SUS_TO_Time_MS )
+			{
+				if ((*pending_write_request)->bNeedERSSuspensionOff == false )
+				{				
+					(*pending_write_request)->bNeedERSSuspensionOff = true;
+					gnERSSuspendOffCount++;
+					
+	#if (ADAPTIVE_RPS_SCH_ENABLE)					
+					READ_PRIO_SCH = false;
+	#endif
+
+				}
+			}
+		}
+#endif
+
+
 		if (user_request->Type == UserRequestType::READ)
 		{
 			switch (caching_mode_per_input_stream[user_request->Stream_id])
 			{
 			case Caching_Mode::TURNED_OFF:
-				static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(user_request->Transaction_list);
+				static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(user_request->Transaction_list, true);
 				return;
 			case Caching_Mode::WRITE_CACHE:
 			case Caching_Mode::READ_CACHE:
@@ -225,7 +275,7 @@ namespace SSD_Components
 				while (it != user_request->Transaction_list.end())
 				{
 					NVM_Transaction_Flash_RD* tr = (NVM_Transaction_Flash_RD*)(*it);
-					if (per_stream_cache[tr->Stream_id]->Exists(tr->Stream_id, tr->LPA))
+					if ( true == per_stream_cache[tr->Stream_id]->Exists(tr->Stream_id, tr->LPA) )
 					{
 						page_status_type available_sectors_bitmap = per_stream_cache[tr->Stream_id]->Get_slot(tr->Stream_id, tr->LPA).State_bitmap_of_existing_sectors & tr->read_sectors_bitmap;
 						if (available_sectors_bitmap == tr->read_sectors_bitmap)
@@ -240,9 +290,21 @@ namespace SSD_Components
 							tr->Data_and_metadata_size_in_byte -= count_sector_no_from_status_bitmap(available_sectors_bitmap) * SECTOR_SIZE_IN_BYTE;
 							it++;
 						}
-						else it++;
+						else
+						{
+							it++;
+						}
 					}
-					else it++;
+					else if ( (false == static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Check_L2P_exists(tr->Stream_id, tr->LPA)) ||
+						(true == static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Check_LPA_locked(tr->Stream_id, tr->LPA)) )
+					{
+						user_request->Sectors_serviced_from_cache += count_sector_no_from_status_bitmap(tr->read_sectors_bitmap);
+						user_request->Transaction_list.erase(it++); 
+					}
+					else
+					{
+						it++;
+					}
 				}
 				if (user_request->Sectors_serviced_from_cache > 0)
 				{
@@ -254,7 +316,7 @@ namespace SSD_Components
 					service_dram_access_request(transfer_info);
 				}
 				if (user_request->Transaction_list.size() > 0)
-					static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(user_request->Transaction_list);
+					static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(user_request->Transaction_list, true);
 
 				return;
 			}
@@ -266,7 +328,7 @@ namespace SSD_Components
 			{
 				case Caching_Mode::TURNED_OFF:
 				case Caching_Mode::READ_CACHE:
-					static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(user_request->Transaction_list);
+					static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(user_request->Transaction_list, false);
 					return;
 				case Caching_Mode::WRITE_CACHE://The data cache manger unit performs like a destage buffer
 				case Caching_Mode::WRITE_READ_CACHE:
@@ -282,10 +344,14 @@ namespace SSD_Components
 				}
 			}
 		}
+
+
 	}
+
 
 	void Data_Cache_Manager_Flash_Advanced::write_to_destage_buffer(User_Request* user_request)
 	{
+
 		//To eliminate race condition, MQSim assumes the management information and user data are stored in separate DRAM modules
 		unsigned int cache_eviction_read_size_in_sectors = 0;//The size of data evicted from cache
 		unsigned int flash_written_back_write_size_in_sectors = 0;//The size of data that is both written back to flash and written to DRAM
@@ -294,18 +360,22 @@ namespace SSD_Components
 		std::list<NVM_Transaction*> writeback_transactions;
 		auto it = user_request->Transaction_list.begin();
 
+		size_t nMediaIssuedSectorCount = 0;
+
 		int queue_id = user_request->Stream_id;
 		if (shared_dram_request_queue)
 			queue_id = 0;
 
-		while (it != user_request->Transaction_list.end() 
-			&& (back_pressure_buffer_depth[queue_id] + cache_eviction_read_size_in_sectors + flash_written_back_write_size_in_sectors) < back_pressure_buffer_max_depth)
+	
+		//step 1. check if the data is in per_stream_cache. if there is, just do in-place update in memory.
+		for(auto it = user_request -> Transaction_list.begin() ; it != user_request -> Transaction_list.end() ; )// user_request -> Transaction_list.erase(it++))
 		{
-			NVM_Transaction_Flash_WR* tr = (NVM_Transaction_Flash_WR*)(*it);
-			if (per_stream_cache[tr->Stream_id]->Exists(tr->Stream_id, tr->LPA))//If the logical address already exists in the cache
+			NVM_Transaction_Flash_WR *tr = static_cast<NVM_Transaction_Flash_WR*>(*it);
+	//		assert(tr -> write_sectors_bitmap == (1 << 8) - 1);
+
+			if(true == per_stream_cache[tr -> Stream_id] -> Exists(tr -> Stream_id, tr -> LPA))
 			{
-				/*MQSim should get rid of writting stale data to the cache.
-				* This situation may result from out-of-order transaction execution*/
+				//update and erase
 				Data_Cache_Slot_Type slot = per_stream_cache[tr->Stream_id]->Get_slot(tr->Stream_id, tr->LPA);
 				sim_time_type timestamp = slot.Timestamp;
 				NVM::memory_content_type content = slot.Content;
@@ -314,10 +384,80 @@ namespace SSD_Components
 					timestamp = tr->DataTimeStamp;
 					content = tr->Content;
 				}
+
 				per_stream_cache[tr->Stream_id]->Update_data(tr->Stream_id, tr->LPA, content, timestamp, tr->write_sectors_bitmap | slot.State_bitmap_of_existing_sectors);
+
+				dram_write_size_in_sectors += count_sector_no_from_status_bitmap(tr->write_sectors_bitmap);
+				user_request->Transaction_list.erase(it++);
 			}
 			else//the logical address is not in the cache
 			{
+				it++;
+			}
+
+		}
+
+		//step 2. fill the chip buffers.(if not in cache)
+		for(auto it = user_request -> Transaction_list.begin() ; it != user_request -> Transaction_list.end() ; )
+		{
+			NVM_Transaction_Flash_WR *tr = static_cast<NVM_Transaction_Flash_WR*>(*it);
+
+			size_t target_channel = tr -> LPA % n_channels;
+			size_t target_chip = (tr -> LPA / n_channels) % n_chips_per_channel;
+
+			size_t target_chip_offset = target_channel * n_chips_per_channel + target_chip;
+			chip_buf *chip_buffer = this -> chip_buffers + target_chip_offset;
+
+			if (LPAs[target_chip_offset].find(tr->LPA) == LPAs[target_chip_offset].end())
+			{
+				//Queue is full!(Actually, one is free. but just leave it for ease of imp-)
+				if (chip_buffer->next_transaction == (chip_buffer->next_insertion + 1) % chip_buffer_size)
+				{
+					it++;
+					continue;
+				}
+
+				chip_buffer->n_entries++;
+				chip_buffer->n_total_transactions++;
+				chip_buffer->buf[chip_buffer->next_insertion] = tr;
+				chip_buffer->next_insertion = (chip_buffer->next_insertion + 1) % chip_buffer_size;
+
+				LPAs[target_chip_offset].insert(tr->LPA);
+
+				if (!(chip_buffer->next_insertion % n_planes_per_chip))
+				{
+					this->flush_order.push(target_chip_offset);
+				}
+			}
+
+			dram_write_size_in_sectors += count_sector_no_from_status_bitmap(tr -> write_sectors_bitmap);
+			user_request -> Transaction_list.erase(it++);
+		}
+		
+
+		//step 3. push data into stream cache(only if condition below is met)
+		for( ; !(this -> flush_order.empty()) ; flush_order.pop())
+		{
+			size_t current_buf_depth = back_pressure_buffer_depth[queue_id] + cache_eviction_read_size_in_sectors + flash_written_back_write_size_in_sectors;
+			
+			if(back_pressure_buffer_max_depth <= current_buf_depth + this -> n_planes_per_chip)
+			{
+				break;
+			}
+
+			chip_buf *target_chip_buffer = this -> chip_buffers + flush_order.front();
+
+			for(size_t i = 0 ; i < n_planes_per_chip ; i++)
+			{
+
+				NVM_Transaction_Flash_WR *tr = target_chip_buffer -> buf[target_chip_buffer -> next_transaction];
+				target_chip_buffer->buf[target_chip_buffer->next_transaction] = nullptr;
+				target_chip_buffer -> next_transaction = (target_chip_buffer -> next_transaction + 1) % chip_buffer_size;
+				target_chip_buffer -> n_entries--;
+
+				LPAs[flush_order.front()].erase(tr->LPA);
+
+
 				if (!per_stream_cache[tr->Stream_id]->Check_free_slot_availability())
 				{
 					Data_Cache_Slot_Type evicted_slot = per_stream_cache[tr->Stream_id]->Evict_one_slot_lru();
@@ -330,21 +470,26 @@ namespace SSD_Components
 						//DEBUG2("Evicting page" << evicted_slot.LPA << " from write buffer ")
 					}
 				}
-				per_stream_cache[tr->Stream_id]->Insert_write_data(tr->Stream_id, tr->LPA, tr->Content, tr->DataTimeStamp, tr->write_sectors_bitmap);
-			}
-			dram_write_size_in_sectors += count_sector_no_from_status_bitmap(tr->write_sectors_bitmap);
-			if (bloom_filter[tr->Stream_id].find(tr->LPA) == bloom_filter[tr->Stream_id].end())//hot/cold data separation
-			{
-				per_stream_cache[tr->Stream_id]->Change_slot_status_to_writeback(tr->Stream_id, tr->LPA); //Eagerly write back cold data
+
+				if(!per_stream_cache[tr -> Stream_id] -> Exists(tr -> Stream_id, tr -> LPA))
+				{
+					per_stream_cache[tr->Stream_id]->Insert_write_data(tr->Stream_id, tr->LPA, tr->Content, tr->DataTimeStamp, tr->write_sectors_bitmap);
+				}
+
+
+				// per_stream_cache[tr->Stream_id]->Change_slot_status_to_writeback(tr->Stream_id, tr->LPA); //Eagerly write back cold data
 				flash_written_back_write_size_in_sectors += count_sector_no_from_status_bitmap(tr->write_sectors_bitmap);
-				bloom_filter[user_request->Stream_id].insert(tr->LPA);
 				writeback_transactions.push_back(tr);
+	
 			}
-			user_request->Transaction_list.erase(it++);
 		}
-		
+
 		user_request->Sectors_serviced_from_cache += dram_write_size_in_sectors;//This is very important update. It is used to decide when all data sectors of a user request are serviced
-		back_pressure_buffer_depth[queue_id] += cache_eviction_read_size_in_sectors + flash_written_back_write_size_in_sectors;
+		back_pressure_buffer_depth[queue_id] += cache_eviction_read_size_in_sectors;
+		if (flash_written_back_write_size_in_sectors > 0)
+		{
+			gnCurrentUserWriteIssueCount += (flash_written_back_write_size_in_sectors / 8);
+		}
 
 		if (evicted_cache_slots->size() > 0)//Issue memory read for cache evictions
 		{
@@ -366,9 +511,14 @@ namespace SSD_Components
 			service_dram_access_request(write_transfer_info);
 		}
 
+
 		if (writeback_transactions.size() > 0)//If any writeback should be performed, then issue flash write transactions
-			static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(writeback_transactions);
-		
+		{
+			nMediaIssuedSectorCount = static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(writeback_transactions, false);
+		}
+
+		back_pressure_buffer_depth[queue_id] += flash_written_back_write_size_in_sectors;
+
 		if (Simulator->Time() > next_bloom_filter_reset_milestone)//Reset control data structures used for hot/cold separation 
 		{
 			bloom_filter[user_request->Stream_id].clear();
@@ -481,8 +631,9 @@ namespace SSD_Components
 					int sharing_id = transaction->Stream_id;
 					if (((Data_Cache_Manager_Flash_Advanced*)_my_instance)->shared_dram_request_queue)
 						sharing_id = 0;
+
+					assert(((Data_Cache_Manager_Flash_Advanced*)_my_instance)->back_pressure_buffer_depth[sharing_id] > 0);
 					((Data_Cache_Manager_Flash_Advanced*)_my_instance)->back_pressure_buffer_depth[sharing_id] -= transaction->Data_and_metadata_size_in_byte / SECTOR_SIZE_IN_BYTE + (transaction->Data_and_metadata_size_in_byte % SECTOR_SIZE_IN_BYTE == 0 ? 0 : 1);
-					
 					
 					if (((Data_Cache_Manager_Flash_Advanced*)_my_instance)->per_stream_cache[transaction->Stream_id]->Exists(transaction->Stream_id, ((NVM_Transaction_Flash_WR*)transaction)->LPA))
 					{
@@ -574,7 +725,7 @@ namespace SSD_Components
 				broadcast_user_request_serviced_signal(((User_Request*)(transfer_info)->Related_request));
 			break;
 		case Data_Cache_Simulation_Event_Type::MEMORY_READ_FOR_CACHE_EVICTION_FINISHED://Reading data from DRAM and writing it back to the flash storage
-			static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(*((std::list<NVM_Transaction*>*)(transfer_info->Related_request)));
+			static_cast<FTL*>(nvm_firmware)->Address_Mapping_Unit->Translate_lpa_to_ppa_and_dispatch(*((std::list<NVM_Transaction*>*)(transfer_info->Related_request)), false);
 			delete (std::list<NVM_Transaction*>*)transfer_info->Related_request;
 			break;
 		case Data_Cache_Simulation_Event_Type::MEMORY_WRITE_FOR_CACHE_FINISHED://The recently read data from flash is written back to memory to support future user read requests

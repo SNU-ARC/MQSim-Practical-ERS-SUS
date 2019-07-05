@@ -32,6 +32,9 @@ namespace SSD_Components
 		bool ToBeIgnored;
 		void* IO_command_info;//used to store host I/O command info
 		void* Data;
+
+		bool bNeedERSSuspensionOff;
+		
 	private:
 		static unsigned int lastId;
 	};

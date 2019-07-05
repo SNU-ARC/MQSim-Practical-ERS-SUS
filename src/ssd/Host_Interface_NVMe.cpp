@@ -3,7 +3,10 @@
 #include "Host_Interface_NVMe.h"
 #include "NVM_Transaction_Flash_RD.h"
 #include "NVM_Transaction_Flash_WR.h"
+#include <assert.h>
 
+
+#define printf(...) 
 
 namespace SSD_Components
 {
@@ -41,6 +44,11 @@ namespace SSD_Components
 			((Input_Stream_NVMe*)input_streams[stream_id])->Submission_head++;//Update submission queue head after starting fetch request
 			if (((Input_Stream_NVMe*)input_streams[stream_id])->Submission_head == ((Input_Stream_NVMe*)input_streams[stream_id])->Submission_queue_size)//Circular queue implementation
 				((Input_Stream_NVMe*)input_streams[stream_id])->Submission_head = 0;
+		}
+		else
+		{
+			std::cout << "Device Q Full: " << ((Input_Stream_NVMe*)input_streams[stream_id])->On_the_fly_requests 
+				<<" : CurrentTime: " << Simulator->Time() <<std::endl;
 		}
 	}
 
@@ -83,6 +91,7 @@ namespace SSD_Components
 		((Host_Interface_NVMe*)host_interface)->broadcast_user_request_arrival_signal(request);
 	}
 
+
 	inline void Input_Stream_Manager_NVMe::Handle_serviced_request(User_Request* request)
 	{
 		stream_id_type stream_id = request->Stream_id;
@@ -92,7 +101,27 @@ namespace SSD_Components
 		DEBUG("** Host Interface: Request #" << request->ID << " from stream #" << request->Stream_id << " is finished")
 
 		if (request->Type == UserRequestType::READ)//If this is a read request, then the read data should be written to host memory
+		{
 			((Host_Interface_NVMe*)host_interface)->request_fetch_unit->Send_read_data(request);
+		}
+		else
+		{
+#if (ERS_CANCEL_TO_ENABLE)
+			if (request->bNeedERSSuspensionOff == true)
+			{
+				assert(request->Type == UserRequestType::WRITE);
+				assert(gnERSSuspendOffCount > 0);
+				gnERSSuspendOffCount--;
+
+				if( gnERSSuspendOffCount == 0 )
+				{
+	#if (ADAPTIVE_RPS_SCH_ENABLE)	
+					READ_PRIO_SCH = true;
+	#endif
+				}
+			}
+#endif
+		}
 
 		if (((Input_Stream_NVMe*)input_streams[stream_id])->Submission_head != ((Input_Stream_NVMe*)input_streams[stream_id])->Submission_tail)//there are waiting requests in the submission queue but have not been fetched, due to Queue_fetch_size limit
 		{
@@ -278,12 +307,14 @@ namespace SSD_Components
 				new_reqeust->Start_LBA = ((LHA_type)sqe->Command_specific[1]) << 31 | (LHA_type)sqe->Command_specific[0];//Command Dword 10 and Command Dword 11
 				new_reqeust->SizeInSectors = sqe->Command_specific[2] & (LHA_type)(0x0000ffff);
 				new_reqeust->Size_in_byte = new_reqeust->SizeInSectors * SECTOR_SIZE_IN_BYTE;
+				new_reqeust->bNeedERSSuspensionOff = false;
 				break;
 			case NVME_WRITE_OPCODE:
 				new_reqeust->Type = UserRequestType::WRITE;
 				new_reqeust->Start_LBA = ((LHA_type)sqe->Command_specific[1]) << 31 | (LHA_type)sqe->Command_specific[0];//Command Dword 10 and Command Dword 11
 				new_reqeust->SizeInSectors = sqe->Command_specific[2] & (LHA_type)(0x0000ffff);
 				new_reqeust->Size_in_byte = new_reqeust->SizeInSectors * SECTOR_SIZE_IN_BYTE;
+				new_reqeust->bNeedERSSuspensionOff = false;
 				break;
 			default:
 				throw std::invalid_argument("NVMe command is not supported!");

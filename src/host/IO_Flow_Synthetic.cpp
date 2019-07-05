@@ -2,6 +2,9 @@
 #include <stdexcept>
 #include "../sim/Engine.h"
 #include "IO_Flow_Synthetic.h"
+#include <assert.h>
+
+extern bool gnStartPrint;
 
 namespace Host_Components
 {
@@ -147,18 +150,311 @@ namespace Host_Components
 			request->Start_LBA -= request->Start_LBA % alignment_value;
 		STAT_generated_request_count++;
 		request->Arrival_time = Simulator->Time();
+
+
+		if (gnStartPrint == true)
+		{
+			std::cout << "Gen: " << (request->Type == Host_IO_Request_Type::READ ? "Read:" : "Write:")
+				<< " REQ_C: " << STAT_generated_read_request_count + STAT_generated_write_request_count
+				<< " LBA: " << std::hex << request->Start_LBA << std::dec 
+				<< " AT: " << request->Arrival_time << std::endl;
+//			gnStartPrint = true;
+		}
+
 		DEBUG("* Host: Request generated - " << (request->Type == Host_IO_Request_Type::READ ? "Read, " : "Write, ") << "LBA:" << request->Start_LBA << ", Size_in_bytes:" << request->LBA_count << "")
 
 		return request;
 	}
 
+	Host_IO_Request* IO_Flow_Synthetic::Generate_next_request(bool bGenRead)
+	{
+		if (stop_time > 0)
+		{
+			if (Simulator->Time() > stop_time)
+				return NULL;
+		}
+		else if (STAT_generated_request_count >= total_requests_to_be_generated)
+			return NULL;
+		
+		Host_IO_Request* request = new Host_IO_Request;
+		if (true == bGenRead)
+		{
+			request->Type = Host_IO_Request_Type::READ;
+			STAT_generated_read_request_count++;
+		}
+		else
+		{
+			request->Type = Host_IO_Request_Type::WRITE;
+			STAT_generated_write_request_count++;
+		}
+
+		switch (request_size_distribution)
+		{
+		case Utils::Request_Size_Distribution_Type::FIXED:
+			request->LBA_count = average_request_size;
+			break;
+		case Utils::Request_Size_Distribution_Type::NORMAL:
+		{
+			double temp_request_size = random_request_size_generator->Normal(average_request_size, variance_request_size);
+			request->LBA_count = (unsigned int)(ceil(temp_request_size));
+			if (request->LBA_count <= 0)
+				request->LBA_count = 1;
+			break;
+		}
+		default:
+			throw std::invalid_argument("Uknown distribution type for requset size.");
+		}
+
+		switch (address_distribution)
+		{
+		case Utils::Address_Distribution_Type::STREAMING:
+			request->Start_LBA = streaming_next_address;
+			if (request->Start_LBA + request->LBA_count > end_lsa_on_device)
+				request->Start_LBA = start_lsa_on_device;
+			streaming_next_address += request->LBA_count;
+			if (streaming_next_address > end_lsa_on_device)
+				streaming_next_address = start_lsa_on_device;
+			if (generate_aligned_addresses)
+				if(streaming_next_address % alignment_value != 0)
+					streaming_next_address += alignment_value - (streaming_next_address % alignment_value);
+			if(streaming_next_address == request->Start_LBA)
+				PRINT_MESSAGE("Synthetic Message Generator: The same address is always repeated due to configuration parameters!")
+			break;
+		case Utils::Address_Distribution_Type::RANDOM_HOTCOLD:
+			if (random_hot_cold_generator->Uniform(0, 1) < hot_region_ratio)// (100-hot)% of requests going to hot% of the address space
+			{
+				request->Start_LBA = random_hot_address_generator->Uniform_ulong(hot_region_end_lsa + 1, end_lsa_on_device);
+				if (request->Start_LBA < hot_region_end_lsa + 1 || request->Start_LBA > end_lsa_on_device)
+					PRINT_ERROR("Out of range address is generated in IO_Flow_Synthetic!\n")
+					if (request->Start_LBA + request->LBA_count > end_lsa_on_device)
+						request->Start_LBA = hot_region_end_lsa + 1;
+			}
+			else
+			{
+				request->Start_LBA = random_hot_address_generator->Uniform_ulong(start_lsa_on_device, hot_region_end_lsa);
+				if (request->Start_LBA < start_lsa_on_device || request->Start_LBA > hot_region_end_lsa)
+					PRINT_ERROR("Out of range address is generated in IO_Flow_Synthetic!\n")
+			}
+			break;
+		case Utils::Address_Distribution_Type::RANDOM_UNIFORM:
+			request->Start_LBA = random_address_generator->Uniform_ulong(start_lsa_on_device, end_lsa_on_device);
+			if (request->Start_LBA < start_lsa_on_device || request->Start_LBA > end_lsa_on_device)
+				PRINT_ERROR("Out of range address is generated in IO_Flow_Synthetic!\n")
+			if (request->Start_LBA + request->LBA_count > end_lsa_on_device)
+				request->Start_LBA = start_lsa_on_device;
+			break;
+		default:
+			PRINT_ERROR("Unknown address distribution type!\n")
+		}
+		if (generate_aligned_addresses)
+			request->Start_LBA -= request->Start_LBA % alignment_value;
+		STAT_generated_request_count++;
+		request->Arrival_time = Simulator->Time();
+
+
+		if ( gnStartPrint == true)
+		{
+			std::cout << "IO_Flow_Synthetic::Generate_next_request: "<< (request->Type == Host_IO_Request_Type::READ ? "Read, " : "Write, ") 
+				<<  "LBA: " << std::hex << request->Start_LBA << std::dec 
+				<< " AT: " << request->Arrival_time << std::endl;
+			gnStartPrint = true;
+		}
+
+		DEBUG("* Host: Request generated - " << (request->Type == Host_IO_Request_Type::READ ? "Read, " : "Write, ") << "LBA:" << request->Start_LBA << ", Size_in_bytes:" << request->LBA_count << "")
+
+		return request;	
+	}
+
+
+	Host_IO_Request* IO_Flow_Synthetic::Generate_next_request(bool bGenRead, unsigned int nLBA_count)
+	{
+		if (stop_time > 0)
+		{
+			if (Simulator->Time() > stop_time)
+				return NULL;
+		}
+		else if (STAT_generated_request_count >= total_requests_to_be_generated)
+			return NULL;
+		
+		Host_IO_Request* request = new Host_IO_Request;
+		if (true == bGenRead)
+		{
+			request->Type = Host_IO_Request_Type::READ;
+			STAT_generated_read_request_count++;
+		}
+		else
+		{
+			request->Type = Host_IO_Request_Type::WRITE;
+			STAT_generated_write_request_count++;
+		}
+
+		request->LBA_count = nLBA_count;
+		
+
+		switch (address_distribution)
+		{
+		case Utils::Address_Distribution_Type::STREAMING:
+			request->Start_LBA = streaming_next_address;
+			if (request->Start_LBA + request->LBA_count > end_lsa_on_device)
+				request->Start_LBA = start_lsa_on_device;
+			streaming_next_address += request->LBA_count;
+			if (streaming_next_address > end_lsa_on_device)
+				streaming_next_address = start_lsa_on_device;
+			if (generate_aligned_addresses)
+				if(streaming_next_address % alignment_value != 0)
+					streaming_next_address += alignment_value - (streaming_next_address % alignment_value);
+			if(streaming_next_address == request->Start_LBA)
+				PRINT_MESSAGE("Synthetic Message Generator: The same address is always repeated due to configuration parameters!")
+			break;
+		case Utils::Address_Distribution_Type::RANDOM_HOTCOLD:
+			if (random_hot_cold_generator->Uniform(0, 1) < hot_region_ratio)// (100-hot)% of requests going to hot% of the address space
+			{
+				request->Start_LBA = random_hot_address_generator->Uniform_ulong(hot_region_end_lsa + 1, end_lsa_on_device);
+				if (request->Start_LBA < hot_region_end_lsa + 1 || request->Start_LBA > end_lsa_on_device)
+					PRINT_ERROR("Out of range address is generated in IO_Flow_Synthetic!\n")
+					if (request->Start_LBA + request->LBA_count > end_lsa_on_device)
+						request->Start_LBA = hot_region_end_lsa + 1;
+			}
+			else
+			{
+				request->Start_LBA = random_hot_address_generator->Uniform_ulong(start_lsa_on_device, hot_region_end_lsa);
+				if (request->Start_LBA < start_lsa_on_device || request->Start_LBA > hot_region_end_lsa)
+					PRINT_ERROR("Out of range address is generated in IO_Flow_Synthetic!\n")
+			}
+			break;
+		case Utils::Address_Distribution_Type::RANDOM_UNIFORM:
+			request->Start_LBA = random_address_generator->Uniform_ulong(start_lsa_on_device, end_lsa_on_device);
+			if (request->Start_LBA < start_lsa_on_device || request->Start_LBA > end_lsa_on_device)
+				PRINT_ERROR("Out of range address is generated in IO_Flow_Synthetic!\n")
+			if (request->Start_LBA + request->LBA_count > end_lsa_on_device)
+				request->Start_LBA = start_lsa_on_device;
+			break;
+		default:
+			PRINT_ERROR("Unknown address distribution type!\n")
+		}
+		if (generate_aligned_addresses)
+			request->Start_LBA -= request->Start_LBA % alignment_value;
+		STAT_generated_request_count++;
+		request->Arrival_time = Simulator->Time();
+
+
+		if ( gnStartPrint == true)
+		{
+			std::cout << "IO_Flow_Synthetic::Generate_next_request: "<< (request->Type == Host_IO_Request_Type::READ ? "Read, " : "Write, ") 
+				<<  "LBA: " << std::hex << request->Start_LBA << std::dec 
+				<< " AT: " << request->Arrival_time << std::endl;
+			gnStartPrint = true;
+		}
+
+		DEBUG("* Host: Request generated - " << (request->Type == Host_IO_Request_Type::READ ? "Read, " : "Write, ") << "LBA:" << request->Start_LBA << ", Size_in_bytes:" << request->LBA_count << "")
+
+		return request;	
+
+	}
+
+
 	void IO_Flow_Synthetic::NVMe_consume_io_request(Completion_Queue_Entry* io_request)
 	{
+		bool bRead;
+
+		Host_IO_Request* request = nvme_software_request_queue[io_request->Command_Identifier];
+		sim_time_type request_delay = Simulator->Time() - request->Arrival_time;
+		unsigned int nSC = request->LBA_count;
+		Host_IO_Request_Type eReqType = request->Type;
+		
+		if (request->Type == Host_IO_Request_Type::READ)
+		{
+			bRead = true;
+		}
+		else
+		{
+			bRead = false;
+		}
+
 		IO_Flow_Base::NVMe_consume_io_request(io_request);
 		IO_Flow_Base::NVMe_update_and_submit_completion_queue_tail();
 		if (generator_type == Utils::Request_Generator_Type::QUEUE_DEPTH)
 		{
-			Host_IO_Request* request = Generate_next_request();
+#if (MULTI_PROCESS_IO_GEN )
+			request = Generate_next_request( bRead );
+#elif (ACT_SIMULATION)
+
+			unsigned int nTimeout;
+			IO_Flow_Event_Type eEventType;
+			sim_time_type Standard_Time; 
+			bool bNextReqGen = false;
+
+			switch (nSC)
+			{
+			case 256:				
+				nTimeout = ONE_SECOND / (ACT_LARGE_DIV * ACT_MAG_COUNT);
+
+				if (eReqType == Host_IO_Request_Type::READ)
+				{
+					gnACTLargeReadCount++;
+					eEventType = IO_Flow_Event_Type::ACT_LARGE_READ;
+					
+					Standard_Time = gnACTLargeReadCount * nTimeout;
+					if ( Standard_Time <= Simulator->Time() )
+					{
+						bNextReqGen = true;
+						if ((Simulator->Time() - Standard_Time) > (sim_time_type)(ACT_STRESS_TO))
+						{
+#if (ACT_STRESS_CHECK_ENABLE)
+							PRINT_ERROR_NO_CIN("Read Stress Test Fail: " << (int)eEventType << " Sim Time: " << Simulator->Time() << " STD Time: " << Standard_Time);
+#endif
+						}	
+					}
+				}
+				else
+				{
+					gnACTLargeWriteCount++;
+					eEventType = IO_Flow_Event_Type::ACT_LARGE_WRITE;
+					
+					Standard_Time = gnACTLargeWriteCount * nTimeout;
+					if ( Standard_Time <= Simulator->Time() ) 
+					{
+						bNextReqGen = true;
+						if ((Simulator->Time() - Standard_Time) > (sim_time_type)(ACT_STRESS_TO))
+						{
+#if (ACT_STRESS_CHECK_ENABLE)
+							PRINT_ERROR_NO_CIN("Write Stress Test Fail: " << (int)eEventType << " Sim Time: " << Simulator->Time() << " STD Time: " << Standard_Time);
+#endif
+
+						}
+					}
+				}
+
+				break;
+			case 3:
+				nTimeout = ONE_SECOND / (ACT_SMALL_DIV * ACT_MAG_COUNT);
+
+				gnACTSmallReadCount++;
+				eEventType = IO_Flow_Event_Type::ACT_SMALL_READ;
+				
+				Standard_Time = gnACTSmallReadCount * nTimeout;
+				if ( Standard_Time <= Simulator->Time() ) 
+				{
+					bNextReqGen = true;
+				}
+				
+				break;
+			default:
+				assert(false);
+			}
+
+			if ( true == bNextReqGen )
+			{ // T/O Expiered 
+				request = Generate_next_request( bRead, nSC);
+			}
+			else
+			{ // Registor Event
+				Simulator->Register_sim_event(Simulator->Time() + (sim_time_type)(nTimeout-request_delay), this, 0, (int)eEventType);
+				request = NULL;
+			}
+#else
+			request = Generate_next_request();   
+#endif
 			/* In the demand based execution mode, the Generate_next_request() function may return NULL
 			* if 1) the simulation stop is met, or 2) the number of generated I/O requests reaches its threshold.*/
 			if (request != NULL)
@@ -197,6 +493,7 @@ namespace Host_Components
 
 	void IO_Flow_Synthetic::Validate_simulation_config() {}
 
+	bool sbFirstEvent = true;
 	void IO_Flow_Synthetic::Execute_simulator_event(MQSimEngine::Sim_Event* event)
 	{
 		if (generator_type == Utils::Request_Generator_Type::BANDWIDTH)
@@ -208,8 +505,76 @@ namespace Host_Components
 				Simulator->Register_sim_event(Simulator->Time() + (sim_time_type)random_time_interval_generator->Exponential((double)Average_inter_arrival_time_nano_sec), this, 0, 0);
 			}
 		}
-		else for (unsigned int i = 0; i < average_number_of_enqueued_requests; i++)
-			Submit_io_request(Generate_next_request());
+		else
+		{
+#if (MULTI_PROCESS_IO_GEN)
+			bool bRead;
+			for (unsigned int i = 0; i < average_number_of_enqueued_requests; i++)
+			{
+				if (0 == (i % 2))
+				{
+					bRead = true;
+				} 	else
+				{
+					bRead = false;
+				}
+
+				Host_IO_Reqeust* req = Generate_next_request(bRead);
+				std::cout << " IO_Flow_Synthetic::Execute_simulator_event: "
+					<< (req->Type==Host_IO_Request_Type::READ)
+					<< " LBA: " << req->Start_LBA << "SC: " << req->LBA_count << std::endl;
+				Submit_io_request(req);
+			}
+#elif (ACT_SIMULATION)
+			if (sbFirstEvent == true)
+			{
+				Host_IO_Reqeust* req;
+				assert ( average_number_of_enqueued_requests == 3);
+
+				req = Generate_next_request(true, 256);
+				std::cout << " IO_Flow_Synthetic::Execute_simulator_event: " << (req->Type==Host_IO_Request_Type::READ) << " LBA: " << req->Start_LBA << "SC: " << req->LBA_count << std::endl;
+				Submit_io_request(req);
+
+				req = Generate_next_request(false, 256);
+				std::cout << " IO_Flow_Synthetic::Execute_simulator_event: " << (req->Type==Host_IO_Request_Type::READ) << " LBA: " << req->Start_LBA << "SC: " << req->LBA_count << std::endl;
+				Submit_io_request(req);
+
+				req = Generate_next_request(true, 3);
+				std::cout << " IO_Flow_Synthetic::Execute_simulator_event: " << (req->Type==Host_IO_Request_Type::READ) << " LBA: " << req->Start_LBA << "SC: " << req->LBA_count << std::endl;
+				Submit_io_request(req);
+
+				sbFirstEvent = false;
+			}
+			else
+			{
+				Host_IO_Reqeust* req = NULL;
+
+				switch ((IO_Flow_Event_Type)(event->Type) )
+				{
+				case IO_Flow_Event_Type::ACT_LARGE_READ:
+					req = Generate_next_request(true, 256);
+					break;
+				case IO_Flow_Event_Type::ACT_LARGE_WRITE:
+					req = Generate_next_request(false, 256);
+					break;
+				case IO_Flow_Event_Type::ACT_SMALL_READ:
+					req = Generate_next_request(true, 3);
+					break;
+				default:
+					assert(false);
+				}
+				
+				if (req != NULL) {
+					Submit_io_request(req);
+				}
+			}
+#else 			
+			for (unsigned int i = 0; i < average_number_of_enqueued_requests; i++)
+			{
+				Submit_io_request(Generate_next_request());
+			}			
+#endif
+		}
 	}
 
 	void IO_Flow_Synthetic::Get_statistics(Utils::Workload_Statistics& stats, LPA_type(*Convert_host_logical_address_to_device_address)(LHA_type lha),

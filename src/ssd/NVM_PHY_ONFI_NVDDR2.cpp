@@ -2,6 +2,21 @@
 #include "../sim/Engine.h"
 #include "NVM_PHY_ONFI_NVDDR2.h"
 #include "Stats.h"
+#include "assert.h"
+
+
+
+extern size_t gnUserPGMPageIssueCount;
+extern size_t gnGCPGMPageIssueCount;
+extern size_t gnCurrentUserWriteIssueCount;
+extern size_t gnONFI_PGM_CompleteCount;
+extern size_t gnCacheEvictionPageCount;
+
+
+
+
+extern bool gnStartPrint;
+
 
 namespace SSD_Components {
 	/*hack: using this style to emulate event/delegate*/
@@ -36,6 +51,8 @@ namespace SSD_Components {
 					bookKeepingTable[channelID][chipID].Die_book_keeping_records[dieID].DieInterleavedTime = INVALID_TIME;
 					bookKeepingTable[channelID][chipID].Die_book_keeping_records[dieID].Expected_finish_time = INVALID_TIME;
 					bookKeepingTable[channelID][chipID].Die_book_keeping_records[dieID].RemainingExecTime = INVALID_TIME;
+					bookKeepingTable[channelID][chipID].Die_book_keeping_records[dieID].ERS_SuspendTrigger = false;
+					bookKeepingTable[channelID][chipID].Die_book_keeping_records[dieID].PGM_SuspendTrigger = false;
 				}
 			}
 		}
@@ -117,6 +134,68 @@ namespace SSD_Components {
 	{
 		channels[page_address.ChannelID]->Chips[page_address.ChipID]->Change_memory_status_preconditioning(&page_address, &lpa);
 	}
+
+	void NVM_PHY_ONFI_NVDDR2::SetTRQueue( Flash_Transaction_Queue** userReadTRQueue,
+						Flash_Transaction_Queue** userWriteTRQueue,
+						Flash_Transaction_Queue** gCReadTRQueue,
+						Flash_Transaction_Queue** gWriteTRQueue,
+						Flash_Transaction_Queue** gCEraseTRQueue,
+						Flash_Transaction_Queue** mappingReadTRQueue,
+						Flash_Transaction_Queue** mappingWriteTRQueue )
+	{
+		UserReadTRQueue = userReadTRQueue;
+		UserWriteTRQueue = userWriteTRQueue;
+		GCReadTRQueue = gCReadTRQueue;
+		GCWriteTRQueue = gWriteTRQueue;
+		GCEraseTRQueue = gCEraseTRQueue;
+		MappingReadTRQueue = mappingReadTRQueue;
+		MappingWriteTRQueue = mappingWriteTRQueue;
+	}
+
+
+	bool NVM_PHY_ONFI_NVDDR2::Check_PGM_suspend_threshold(flash_channel_ID_type channe_id, flash_chip_ID_type chip_id, flash_die_ID_type die_id)
+	{
+		ONFI_Channel_NVDDR2* target_channel = channels[channe_id];
+		NVM::FlashMemory::Flash_Chip* targetChip = target_channel->Chips[chip_id];
+
+		NVM::FlashMemory::Die* targetDie = target_channel->Chips[chip_id]->Dies[die_id];
+
+		if (targetDie->CurrentCMD == NULL)
+			return true;
+
+		return false;
+	}
+
+	bool NVM_PHY_ONFI_NVDDR2::Check_ERS_suspend_threshold(flash_channel_ID_type channe_id, flash_chip_ID_type chip_id, flash_die_ID_type die_id)
+	{
+		ONFI_Channel_NVDDR2* target_channel = channels[channe_id];
+		NVM::FlashMemory::Flash_Chip* targetChip = target_channel->Chips[chip_id];
+
+		NVM::FlashMemory::Die* targetDie = target_channel->Chips[chip_id]->Dies[die_id];
+
+		if (targetDie->CurrentCMD == NULL)
+			return true;
+
+#if (ERS_CANCEL_TO_ENABLE)
+		if ( gnERSSuspendOffCount > 0 )
+		{
+		
+	#if (true == ERS_DEFER_SUS_ENABLE)
+			sim_time_type remainExeTime = targetDie->Expected_finish_time - Simulator->Time();
+			if ( remainExeTime <= ERS_TIME_PER_LOOP )
+			{
+				return true; 
+			}
+	#else
+			return true;
+	#endif
+	
+		}
+#endif		
+
+		return false;
+	}
+
 	
 	void NVM_PHY_ONFI_NVDDR2::Send_command_to_chip(std::list<NVM_Transaction_Flash*>& transaction_list)
 	{
@@ -131,6 +210,7 @@ namespace SSD_Components {
 		if (target_channel->GetStatus() == BusChannelStatus::BUSY && chipBKE->OngoingDieCMDTransfers.size() == 0)
 			PRINT_ERROR("Bus " << target_channel->ChannelID << ": starting communication on a busy flash channel!");
 
+
 		sim_time_type suspendTime = 0;
 		if (!dieBKE->Free)
 		{
@@ -140,11 +220,19 @@ namespace SSD_Components {
 				{
 				case Transaction_Type::WRITE:
 					Stats::IssuedSuspendProgramCMD++;
-					suspendTime = target_channel->ProgramSuspendCommandTime + targetChip->GetSuspendProgramTime();
+					assert (chipBKE->No_of_active_dies == 1);
+					chipBKE->No_of_active_dies--;
+//					suspendTime = target_channel->ProgramSuspendCommandTime + targetChip->GetSuspendProgramTime();
+					dieBKE->PGM_SuspendTrigger = true;
+
 					break;
 				case Transaction_Type::ERASE:
 					Stats::IssuedSuspendEraseCMD++;
-					suspendTime = target_channel->EraseSuspendCommandTime + targetChip->GetSuspendEraseTime();
+					assert (chipBKE->No_of_active_dies == 1);
+					chipBKE->No_of_active_dies--;
+//					suspendTime = target_channel->EraseSuspendCommandTime + targetChip->GetSuspendEraseTime();
+					dieBKE->ERS_SuspendTrigger = true;
+
 					break;
 				default:
 					PRINT_ERROR("Read suspension is not supported!")
@@ -205,11 +293,50 @@ namespace SSD_Components {
 			dieBKE->Expected_finish_time = chipBKE->Last_transfer_finish_time + targetChip->Get_command_execution_latency(dieBKE->ActiveCommand->CommandCode, dieBKE->ActiveCommand->Address[0].PageID);
 			if (chipBKE->Expected_command_exec_finish_time < dieBKE->Expected_finish_time)
 				chipBKE->Expected_command_exec_finish_time = dieBKE->Expected_finish_time;
+
+
+			if (gnStartPrint == true && transaction_list.front()->Address.ChannelID == DEBUG_CH )
+//			if ( transaction_list.front()->Address.ChannelID == 3 && transaction_list.front()->Address.ChipID == 3 )
+			{
+				std::cout << "NVDDR2::SCTC: TSC_ADDR: " << std::hex << (void*)(transaction_list.front()) << std::dec
+					<< " CH_ID: " << transaction_list.front()->Address.ChannelID
+					<< " CHIP_ID: " << transaction_list.front()->Address.ChipID
+					<< " CMDCODE: " << dieBKE->ActiveCommand->CommandCode << " : " 
+					<< " CEFT: " << chipBKE->Expected_command_exec_finish_time << " : " 
+					<< " DEFT: " << dieBKE->Expected_finish_time << " : " 
+					<< " ST: " << Simulator->Time() << std::endl;
+			}
+
+
+			
 			break;
 		case Transaction_Type::WRITE:
 			if (((NVM_Transaction_Flash_WR*)transaction_list.front())->ExecutionMode == WriteExecutionModeType::SIMPLE)
 			{
-				if (transaction_list.size() == 1) {
+	
+
+				for (std::list<NVM_Transaction_Flash*>::iterator it = transaction_list.begin();
+					it != transaction_list.end(); it++) 
+				{
+					switch ((*it)->Source)
+					{
+					case Transaction_Source_Type::USERIO:
+						gnUserPGMPageIssueCount++;
+						break;
+					case Transaction_Source_Type::GC_WL:
+						gnGCPGMPageIssueCount++;
+						break;
+					case Transaction_Source_Type::CACHE:
+						gnCacheEvictionPageCount++;
+						break;
+					default:
+						assert(false);
+
+					}
+				}
+//				assert(gnCurrentUserWriteIssueCount >= gnUserPGMPageIssueCount);
+				if (transaction_list.size() == 1) 
+				{
 					Stats::IssuedProgramCMD++;
 					dieBKE->ActiveCommand->CommandCode = CMD_PROGRAM_PAGE;
 					DEBUG("Chip " << targetChip->ChannelID << ", " << targetChip->ChipID << ", " << transaction_list.front()->Address.DieID << ": Sending program command to chip for LPA: " << transaction_list.front()->LPA)
@@ -246,6 +373,20 @@ namespace SSD_Components {
 				dieBKE->Expected_finish_time = chipBKE->Last_transfer_finish_time + targetChip->Get_command_execution_latency(dieBKE->ActiveCommand->CommandCode, dieBKE->ActiveCommand->Address[0].PageID);
 				if (chipBKE->Expected_command_exec_finish_time < dieBKE->Expected_finish_time)
 					chipBKE->Expected_command_exec_finish_time = dieBKE->Expected_finish_time;
+
+				if (gnStartPrint == true && transaction_list.front()->Address.ChannelID == DEBUG_CH )
+//				if ( transaction_list.front()->Address.ChannelID == 3 && transaction_list.front()->Address.ChipID == 3 )
+				{
+					std::cout << "NVDDR2::SCTC: TSC_ADDR: " << std::hex << (void*)(transaction_list.front()) << std::dec
+						<< " CH_ID: " << transaction_list.front()->Address.ChannelID
+						<< " CHIP_ID: " << transaction_list.front()->Address.ChipID
+						<< " CMDCODE: " << dieBKE->ActiveCommand->CommandCode << " : " 
+						<< " CEFT: " << chipBKE->Expected_command_exec_finish_time << " : " 
+						<< " DEFT: " << dieBKE->Expected_finish_time << " : " 
+						<< " ST: " << Simulator->Time() << std::endl;
+				}
+
+				
 			}
 			else//Copyback write for GC
 			{
@@ -279,6 +420,19 @@ namespace SSD_Components {
 				dieBKE->Expected_finish_time = chipBKE->Last_transfer_finish_time + targetChip->Get_command_execution_latency(dieBKE->ActiveCommand->CommandCode, dieBKE->ActiveCommand->Address[0].PageID);
 				if (chipBKE->Expected_command_exec_finish_time < dieBKE->Expected_finish_time)
 					chipBKE->Expected_command_exec_finish_time = dieBKE->Expected_finish_time;
+
+				if (gnStartPrint == true && transaction_list.front()->Address.ChannelID == DEBUG_CH )
+//				if ( transaction_list.front()->Address.ChannelID == 3 && transaction_list.front()->Address.ChipID == 3 )
+				{
+					std::cout << "NVDDR2::SCTC: TSC_ADDR: " << std::hex << (void*)(transaction_list.front()) << std::dec
+						<< " CH_ID: " << transaction_list.front()->Address.ChannelID
+						<< " CHIP_ID: " << transaction_list.front()->Address.ChipID
+						<< " CMDCODE: " << dieBKE->ActiveCommand->CommandCode << " : " 
+						<< " CEFT: " << chipBKE->Expected_command_exec_finish_time << " : " 
+						<< " DEFT: " << dieBKE->Expected_finish_time << " : " 
+						<< " ST: " << Simulator->Time() << std::endl;
+				}
+
 			}
 			break;
 		case Transaction_Type::ERASE:
@@ -314,6 +468,21 @@ namespace SSD_Components {
 			dieBKE->Expected_finish_time = chipBKE->Last_transfer_finish_time + targetChip->Get_command_execution_latency(dieBKE->ActiveCommand->CommandCode, dieBKE->ActiveCommand->Address[0].PageID);
 			if (chipBKE->Expected_command_exec_finish_time < dieBKE->Expected_finish_time)
 				chipBKE->Expected_command_exec_finish_time = dieBKE->Expected_finish_time;
+
+
+			if (gnStartPrint == true && transaction_list.front()->Address.ChannelID == DEBUG_CH )
+//			if ( transaction_list.front()->Address.ChannelID == 3 && transaction_list.front()->Address.ChipID == 3 )
+			{
+				std::cout << "NVDDR2::SCTC: TSC_ADDR: " << std::hex << (void*)(transaction_list.front()) << std::dec 
+									<< " CH_ID: " << transaction_list.front()->Address.ChannelID
+									<< " CHIP_ID: " << transaction_list.front()->Address.ChipID
+									<< " CMDCODE: " << dieBKE->ActiveCommand->CommandCode << " : " 
+									<< " CEFT: " << chipBKE->Expected_command_exec_finish_time << " : " 
+									<< " DEFT: " << dieBKE->Expected_finish_time << " : " 
+									<< " ST: " << Simulator->Time() << std::endl;
+			}
+
+			
 			break;
 		default:
 			throw std::invalid_argument("NVM_PHY_ONFI_NVDDR2: Unhandled event specified!");
@@ -346,16 +515,37 @@ namespace SSD_Components {
 		NVM::FlashMemory::Flash_Chip* targetChip = targetChannel->Chips[dieBKE->ActiveTransactions.front()->Address.ChipID];
 		ChipBookKeepingEntry *chipBKE = &bookKeepingTable[channel_id][targetChip->ChipID];
 
+		unsigned int nCH_ID = channel_id;
+		unsigned int nCHIP_ID = dieBKE->ActiveTransactions.front()->Address.ChipID;
+
 
 		switch ((NVDDR2_SimEventType)ev->Type)
 		{
 		case NVDDR2_SimEventType::READ_CMD_ADDR_TRANSFERRED:
 			//DEBUG2("Chip " << targetChip->ChannelID << ", " << targetChip->ChipID << ", " << dieBKE->ActiveTransactions.front()->Address.DieID << ": READ_CMD_ADDR_TRANSFERRED ")
-			targetChip->EndCMDXfer(dieBKE->ActiveCommand);
+
+			if (true == dieBKE->ERS_SuspendTrigger)
+			{
+				targetChip->EndCMDXfer(dieBKE->ActiveCommand, targetChip->GetSuspendEraseTime());
+				dieBKE->ERS_SuspendTrigger = false;
+			}
+			else if (true == dieBKE->PGM_SuspendTrigger)
+			{
+				targetChip->EndCMDXfer(dieBKE->ActiveCommand, targetChip->GetSuspendProgramTime());
+				dieBKE->PGM_SuspendTrigger = false;
+			}
+			else
+			{
+				targetChip->EndCMDXfer(dieBKE->ActiveCommand, 0);
+			}
+
 			for (auto tr : dieBKE->ActiveTransactions)
 				tr->STAT_execution_time = dieBKE->Expected_finish_time - Simulator->Time();
 			chipBKE->OngoingDieCMDTransfers.pop();
 			chipBKE->No_of_active_dies++;
+
+			assert ( chipBKE->No_of_active_dies < 2);
+			
 			if (chipBKE->OngoingDieCMDTransfers.size() > 0)
 			{
 				perform_interleaved_cmd_data_transfer(targetChip, chipBKE->OngoingDieCMDTransfers.front());
@@ -366,14 +556,32 @@ namespace SSD_Components {
 				chipBKE->Status = ChipStatus::READING;
 				targetChannel->SetStatus(BusChannelStatus::IDLE, targetChip);
 			}
+			
+
+			if (gnStartPrint == true && nCH_ID == DEBUG_CH)
+//			if ( nCH_ID == 3 && nCHIP_ID == 3 )
+			{
+				std::cout << "NVDDR2::ESE: TSC_ADDR: " << std::hex << (void*)dieBKE->ActiveTransactions.front() << std::dec				
+					<< " CH_ID: " << nCH_ID
+					<< " CHIP_ID: " << nCHIP_ID
+					<< " : " << "READ_CMD_ADDR_TRANSFERRED"  
+					<< " CEFT: " << chipBKE->Expected_command_exec_finish_time << " : " 
+					<< " DEFT: " << dieBKE->Expected_finish_time << " : " 
+					<< " ST: " << Simulator->Time() << std::endl;
+			}
+
+			
 			break;
 		case NVDDR2_SimEventType::ERASE_SETUP_COMPLETED:
 			//DEBUG2("Chip " << targetChip->ChannelID << ", " << targetChip->ChipID << ", " << dieBKE->ActiveTransactions.front()->Address.DieID << ": ERASE_SETUP_COMPLETED ")
-			targetChip->EndCMDXfer(dieBKE->ActiveCommand);
+			targetChip->EndCMDXfer(dieBKE->ActiveCommand, 0);
 			for (auto &tr : dieBKE->ActiveTransactions)
 				tr->STAT_execution_time = dieBKE->Expected_finish_time - Simulator->Time();
 			chipBKE->OngoingDieCMDTransfers.pop();
 			chipBKE->No_of_active_dies++;
+			
+			assert ( chipBKE->No_of_active_dies < 2);
+			
 			if (chipBKE->OngoingDieCMDTransfers.size() > 0)
 			{
 				perform_interleaved_cmd_data_transfer(targetChip, chipBKE->OngoingDieCMDTransfers.front());
@@ -384,6 +592,21 @@ namespace SSD_Components {
 				chipBKE->Status = ChipStatus::ERASING;
 				targetChannel->SetStatus(BusChannelStatus::IDLE, targetChip);
 			}
+
+
+			if (gnStartPrint == true && nCH_ID == DEBUG_CH)
+//			if ( nCH_ID == 3 && nCHIP_ID == 3 )
+			{
+				std::cout << "NVDDR2::ESE: TSC_ADDR: " << std::hex << (void*)dieBKE->ActiveTransactions.front() << std::dec
+					<< " CH_ID: " << nCH_ID
+					<< " CHIP_ID: " << nCHIP_ID
+					<< " : " << "ERASE_SETUP_COMPLETED"  
+					<< " CEFT: " << chipBKE->Expected_command_exec_finish_time << " : " 
+					<< " DEFT: " << dieBKE->Expected_finish_time << " : " 
+					<< " ST: " << Simulator->Time() << std::endl;
+			}
+
+			
 			break;
 		case NVDDR2_SimEventType::PROGRAM_CMD_ADDR_DATA_TRANSFERRED:
 		case NVDDR2_SimEventType::PROGRAM_COPYBACK_CMD_ADDR_TRANSFERRED:
@@ -393,6 +616,9 @@ namespace SSD_Components {
 				tr->STAT_execution_time = dieBKE->Expected_finish_time - Simulator->Time();
 			chipBKE->OngoingDieCMDTransfers.pop();
 			chipBKE->No_of_active_dies++;
+			
+			assert ( chipBKE->No_of_active_dies < 2);
+
 			if (chipBKE->OngoingDieCMDTransfers.size() > 0)
 			{
 				perform_interleaved_cmd_data_transfer(targetChip, chipBKE->OngoingDieCMDTransfers.front());
@@ -403,6 +629,22 @@ namespace SSD_Components {
 				chipBKE->Status = ChipStatus::WRITING;
 				targetChannel->SetStatus(BusChannelStatus::IDLE, targetChip);
 			}
+
+
+			if (gnStartPrint == true && nCH_ID == DEBUG_CH)
+//			if ( nCH_ID == 3 && nCHIP_ID == 3 )
+			{
+				std::cout << "NVDDR2::ESE: TSC_ADDR: " << std::hex << (void*)dieBKE->ActiveTransactions.front() << std::dec
+					<< " CH_ID: " << nCH_ID
+					<< " CHIP_ID: " << nCHIP_ID
+					<< " : " << "PROGRAM_CMD_ADDR_TRANSFERRED"  
+					<< " CEFT: " << chipBKE->Expected_command_exec_finish_time << " : " 
+					<< " DEFT: " << dieBKE->Expected_finish_time << " : " 
+					<< " ST: " << Simulator->Time() << std::endl;
+			}
+
+
+			
 			break;
 		case NVDDR2_SimEventType::READ_DATA_TRANSFERRED:
 			//DEBUG2("Chip " << targetChip->ChannelID << ", " << targetChip->ChipID << ", " << dieBKE->ActiveTransactions.front()->Address.DieID << ": READ_DATA_TRANSFERRED ")
@@ -432,12 +674,47 @@ namespace SSD_Components {
 			}
 			if (chipBKE->Status == ChipStatus::IDLE)
 				if (dieBKE->Suspended)
-					send_resume_command_to_chip(targetChip, chipBKE);
+				{
+					if (UserReadTRQueue[nCH_ID][nCHIP_ID].size() == 0)
+					{
+						send_resume_command_to_chip(targetChip, chipBKE);
+					}
+					
+					if (gnStartPrint == true && nCH_ID == DEBUG_CH)
+//					if ( nCH_ID == 3 && nCHIP_ID == 3 )
+					{
+						std::cout << "NVDDR2::ESE: TSC:ADDR: " << std::hex <<(void*)UserReadTRQueue[nCH_ID][nCHIP_ID].front() << std::dec
+							<< " CH_ID: " << nCH_ID
+							<< " CHIP_ID: "<< nCHIP_ID
+							<< " : UQS: " << UserReadTRQueue[nCH_ID][nCHIP_ID].size()
+							<< std::endl;
+					}
+
+				}
 			targetChannel->SetStatus(BusChannelStatus::IDLE, targetChip);
+
+
+			if (gnStartPrint == true && nCH_ID == DEBUG_CH)
+//			if ( nCH_ID == 3 && nCHIP_ID == 3 )
+			{
+				std::cout << "NVDDR2::ESE: TSC_ADDR: " << std::hex << (void*)dieBKE->ActiveTransactions.front() << std::dec
+					<< " CH_ID: " << nCH_ID
+					<< " CHIP_ID: "<< nCHIP_ID
+					<< " : " << "READ_DATA_TRANSFERRED"  
+					<< " CEFT: " << chipBKE->Expected_command_exec_finish_time << " : " 
+					<< " DEFT: " << dieBKE->Expected_finish_time << " : " 
+					<< " ST: " << Simulator->Time() << std::endl;
+
+			}
+			
 			break;
 		default:
 			PRINT_ERROR("Unknown simulation event specified for NVM_PHY_ONFI_NVDDR2!")
 		}
+
+
+
+
 
 		/* Copyback requests are prioritized over other type of requests since they need very short transfer time.
 		In addition, they are just used for GC purpose. */
@@ -500,6 +777,7 @@ namespace SSD_Components {
 		broadcastChannelIdleSignal(channel_id);
 	}
 
+
 	inline void NVM_PHY_ONFI_NVDDR2::handle_ready_signal_from_chip(NVM::FlashMemory::Flash_Chip* chip, NVM::FlashMemory::Flash_Command* command)
 	{
 		ChipBookKeepingEntry *chipBKE = &_my_instance->bookKeepingTable[chip->ChannelID][chip->ChipID];
@@ -510,6 +788,9 @@ namespace SSD_Components {
 		case CMD_READ_PAGE:
 		case CMD_READ_PAGE_MULTIPLANE:
 			DEBUG("Chip " << chip->ChannelID << ", " << chip->ChipID << ": finished  read command")
+
+			assert ( chipBKE->No_of_active_dies < 2);
+				
 			chipBKE->No_of_active_dies--;
 			if (chipBKE->No_of_active_dies == 0)//After finishing the last command, the chip state is changed
 				chipBKE->Status = ChipStatus::WAIT_FOR_DATA_OUT;
@@ -540,6 +821,9 @@ namespace SSD_Components {
 			break;
 		case CMD_READ_PAGE_COPYBACK:
 		case CMD_READ_PAGE_COPYBACK_MULTIPLANE:
+
+			assert ( chipBKE->No_of_active_dies < 2);
+
 			chipBKE->No_of_active_dies--;
 			if (chipBKE->No_of_active_dies == 0)
 				chipBKE->Status = ChipStatus::WAIT_FOR_COPYBACK_CMD;
@@ -593,10 +877,13 @@ namespace SSD_Components {
 			{
 				((NVM_Transaction_Flash_WR*)(*it))->Content = command->Meta_data[i].LPA;
 				_my_instance->broadcastTransactionServicedSignal(*it);
+				gnONFI_PGM_CompleteCount++;
 			}
 			dieBKE->ActiveTransactions.clear();
 			dieBKE->ClearCommand();
 
+			assert ( chipBKE->No_of_active_dies < 2);
+			assert ( chipBKE->No_of_active_dies != 0);
 			chipBKE->No_of_active_dies--;
 			if (chipBKE->No_of_active_dies == 0 && chipBKE->WaitingReadTXCount == 0)
 				chipBKE->Status = ChipStatus::IDLE;
@@ -615,6 +902,8 @@ namespace SSD_Components {
 			dieBKE->ActiveTransactions.clear();
 			dieBKE->ClearCommand();
 
+			assert ( chipBKE->No_of_active_dies < 2);
+			
 			chipBKE->No_of_active_dies--;
 			if (chipBKE->No_of_active_dies == 0 && chipBKE->WaitingReadTXCount == 0)
 				chipBKE->Status = ChipStatus::IDLE;
@@ -709,10 +998,14 @@ namespace SSD_Components {
 			case CMD_PROGRAM_PAGE_MULTIPLANE:
 			case CMD_PROGRAM_PAGE_COPYBACK:
 			case CMD_PROGRAM_PAGE_COPYBACK_MULTIPLANE:
+				assert(chipBKE->No_of_active_dies == 0);
+				chipBKE->No_of_active_dies++;
 				chipBKE->Status = ChipStatus::WRITING;
 				break;
 			case CMD_ERASE_BLOCK:
 			case CMD_ERASE_BLOCK_MULTIPLANE:
+				assert(chipBKE->No_of_active_dies == 0);
+				chipBKE->No_of_active_dies++;
 				chipBKE->Status = ChipStatus::ERASING;
 				break;
 			}

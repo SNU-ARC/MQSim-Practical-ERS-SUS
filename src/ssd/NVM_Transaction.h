@@ -14,6 +14,7 @@ namespace SSD_Components
 	class NVM_Transaction
 	{
 	public:
+		NVM_Transaction() : Type(Transaction_Type::UNKOWN){}
 		NVM_Transaction(stream_id_type stream_id, Transaction_Source_Type source, Transaction_Type type, User_Request* user_request) :
 			Stream_id(stream_id), Source(source), Type(type), UserIORequest(user_request), Issue_time(Simulator->Time()), STAT_execution_time(INVALID_TIME), STAT_transfer_time(INVALID_TIME) {}
 		stream_id_type Stream_id;

@@ -97,6 +97,10 @@ namespace SSD_Components
 		bool Is_page_valid(Block_Pool_Slot_Type* block, flash_page_ID_type page_id);//Make the page invalid in the block bookkeeping record
 	protected:
 		PlaneBookKeepingType ****plane_manager;//Keeps track of plane block usage information
+
+		PlaneBookKeepingType* DebugPlanes[4][4][1][8];
+
+
 		GC_and_WL_Unit_Base *gc_and_wl_unit;
 		unsigned int max_allowed_block_erase_count;
 		unsigned int total_concurrent_streams_no;

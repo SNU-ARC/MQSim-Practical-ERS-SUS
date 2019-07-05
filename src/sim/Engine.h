@@ -7,6 +7,7 @@
 #include "EventTree.h"
 #include "Sim_Object.h"
 
+#define DEBUG_CH (1)
 namespace MQSimEngine {
 	class Engine
 	{

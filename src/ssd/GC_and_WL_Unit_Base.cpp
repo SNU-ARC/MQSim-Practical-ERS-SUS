@@ -1,4 +1,6 @@
+#include <assert.h>
 #include "GC_and_WL_Unit_Base.h"
+
 
 namespace SSD_Components
 {
@@ -28,6 +30,11 @@ namespace SSD_Components
 		random_pp_threshold = (unsigned int)(rho * pages_no_per_block);
 		if (block_pool_gc_threshold < max_ongoing_gc_reqs_per_plane)
 			block_pool_gc_threshold = max_ongoing_gc_reqs_per_plane;
+
+		for (unsigned int nCHIter = 0; nCHIter < channel_count; nCHIter++)
+			for (unsigned int nChipIter = 0; nChipIter < chip_no_per_channel; nChipIter++)
+				for (unsigned int nPlaneIter = 0; nPlaneIter < plane_no_per_die; nPlaneIter++)
+					DebugMinFreeBlockCount[nCHIter][nChipIter][nPlaneIter] = 0xFFFFFFFF;
 	}
 
 	void GC_and_WL_Unit_Base::Setup_triggers()
@@ -57,6 +64,7 @@ namespace SSD_Components
 				PRINT_ERROR("Unexpected situation in the GC_and_WL_Unit_Base function!")
 			}
 			if (_my_instance->block_manager->Block_has_ongoing_gc_wl(transaction->Address))
+			{
 				if (_my_instance->block_manager->Can_execute_gc_wl(transaction->Address))
 				{
 					NVM::FlashMemory::Physical_Page_Address gc_wl_candidate_address(transaction->Address);
@@ -99,6 +107,13 @@ namespace SSD_Components
 					block->Erase_transaction = gc_wl_erase_tr;
 					_my_instance->tsu->Schedule();
 				}
+				else
+				{
+//					assert(false);
+				}
+			}
+
+
 			return;
 		}
 
@@ -164,8 +179,17 @@ namespace SSD_Components
 				_my_instance->run_static_wearleveling(transaction->Address);
 			_my_instance->address_mapping_unit->Start_servicing_writes_for_overfull_plane(transaction->Address);//Must be inovked after above statements since it may lead to flash page consumption for waiting program transactions
 
-			if (_my_instance->Stop_servicing_writes(transaction->Address))
+//			if (_my_instance->Stop_servicing_writes(transaction->Address))
+//			if (pbke->Get_free_block_pool_size() <= 15)
+#if (PGM_SUS_ENABLE || MLC_TLC_GC_THRESHOLD)
+			if (pbke->Get_free_block_pool_size() <= 34)
+#else
+			if (pbke->Get_free_block_pool_size() <= 20)
+#endif
+			{
+//				std::cout << "GC Trigger : " << transaction->Address.ChannelID << " : " << transaction->Address.ChipID << " : " << transaction->Address.PlaneID << " : " << pbke->Get_free_block_pool_size() << std::endl;
 				_my_instance->Check_gc_required(pbke->Get_free_block_pool_size(), transaction->Address);
+			}
 			break;
 		}
 	}
@@ -178,7 +202,7 @@ namespace SSD_Components
 
 	GC_Block_Selection_Policy_Type GC_and_WL_Unit_Base::Get_gc_policy()
 	{
-		return block_selection_policy;
+		return block_selection_policy; 
 	}
 
 	unsigned int GC_and_WL_Unit_Base::Get_GC_policy_specific_parameter()
@@ -213,8 +237,20 @@ namespace SSD_Components
 	
 	bool GC_and_WL_Unit_Base::Stop_servicing_writes(const NVM::FlashMemory::Physical_Page_Address& plane_address)
 	{
+		bool bRet = false;
 		PlaneBookKeepingType* pbke = &(_my_instance->block_manager->plane_manager[plane_address.ChannelID][plane_address.ChipID][plane_address.DieID][plane_address.PlaneID]);
-		return block_manager->Get_pool_size(plane_address) < max_ongoing_gc_reqs_per_plane;
+
+		if (DebugMinFreeBlockCount[plane_address.ChannelID][plane_address.ChipID][plane_address.PlaneID] > (block_manager->Get_pool_size(plane_address)))
+		{
+			DebugMinFreeBlockCount[plane_address.ChannelID][plane_address.ChipID][plane_address.PlaneID] = block_manager->Get_pool_size(plane_address);
+//			std::cout << "Min FREE BLK : " << plane_address.ChannelID << " : " << plane_address.ChipID << " : " << plane_address.PlaneID << " : " << block_manager->Get_pool_size(plane_address) << std::endl;
+		}
+
+		if (true == (block_manager->Get_pool_size(plane_address) < max_ongoing_gc_reqs_per_plane))
+		{
+			bRet = true;
+		}
+		return bRet;
 	}
 
 	bool GC_and_WL_Unit_Base::is_safe_gc_wl_candidate(const PlaneBookKeepingType* plane_record, const flash_block_ID_type gc_wl_candidate_block_id)

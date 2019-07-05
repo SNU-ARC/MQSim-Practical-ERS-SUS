@@ -2,6 +2,8 @@
 #include "../ssd/Host_Interface_Defs.h"
 #include "../sim/Engine.h"
 
+extern bool gnStartPrint;
+
 namespace Host_Components
 {
 	//unsigned int InputStreamBase::lastId = 0;
@@ -109,6 +111,8 @@ namespace Host_Components
 	IO_Flow_Base::~IO_Flow_Base()
 	{
 		log_file.close();
+		read_log_file.close();
+		write_log_file.close();
 		for(auto &req : waiting_requests)
 			if (req)
 				delete req;
@@ -131,8 +135,15 @@ namespace Host_Components
 	{
 		next_logging_milestone = logging_period;
 		if (enabled_logging)
+		{
 			log_file.open(logging_file_path, std::ofstream::out);
+			read_log_file.open( logging_file_path + "_read", std::ofstream::out);
+			write_log_file.open( logging_file_path + "_write", std::ofstream::out);
+		}
 		log_file << "SimulationTime(us)\t" << "ReponseTime(us)\t" << "EndToEndDelay(us)"<< std::endl;
+//		read_log_file  << "Delay(us)\t" << std::endl;
+//		write_log_file << "Delay(us)\t" << std::endl;
+
 		STAT_sum_device_response_time_short_term = 0;
 		STAT_serviced_request_count_short_term = 0;
 	}
@@ -212,8 +223,31 @@ namespace Host_Components
 				else progress_bar += " ";
 			}
 			progress_bar += "] ";
-			PRINT_MESSAGE(progress_bar << " " << progress << "% progress in " << ID() << std::endl)
+			PRINT_MESSAGE(progress_bar << " " << progress << "% progress in " << ID())
+
+#if (ACT_SIMULATION)
+			sim_time_type STD_read_time = gnACTLargeReadCount * (ONE_SECOND / (ACT_LARGE_DIV * ACT_MAG_COUNT) );
+			sim_time_type STD_write_time = gnACTLargeWriteCount * (ONE_SECOND / (ACT_LARGE_DIV * ACT_MAG_COUNT) );
+			bool bPrintStress = false;
+
+			if ( STD_read_time < Simulator->Time()	&& (Simulator->Time() - STD_read_time) > ONE_SECOND )
+			{
+				std::cout << "	Stress Read: "	<<	Simulator->Time() - STD_read_time;
+				bPrintStress = true;
+			}
+			if ( STD_write_time < Simulator->Time() && (Simulator->Time() - STD_write_time) > ONE_SECOND )
+			{
+				std::cout << "	Stress Write: " <<	Simulator->Time() - STD_write_time;
+				bPrintStress = true;
+			}
+
+			if (bPrintStress == true)
+			{
+				std::cout << std::endl;
+			}		
+#endif 
 				next_progress_step += 5;
+
 		}
 
 		if (Simulator->Time() > next_logging_milestone)
@@ -225,6 +259,7 @@ namespace Host_Components
 			next_logging_milestone = Simulator->Time() + logging_period;
 		}
 	}
+	unsigned int snLongReadCount = 0;
 	void IO_Flow_Base::NVMe_consume_io_request(Completion_Queue_Entry* cqe)
 	{
 		//Find the request and update statistics
@@ -264,6 +299,31 @@ namespace Host_Components
 			if (request_delay < STAT_min_request_delay_read)
 				STAT_min_request_delay_read = request_delay;
 			STAT_transferred_bytes_read += request->LBA_count * SECTOR_SIZE_IN_BYTE;
+
+			if ( (gnStartPrint == true) && (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) > 170 )
+			{
+				snLongReadCount++;
+				std::cout << "IO_Flow_Base::NVMe_consume_io_request: Read: REQ Count: "<< STAT_serviced_read_request_count << "\t " 
+					<< snLongReadCount << "\t Delay(us): " 
+					<< (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) 
+					<< "\t LBA:" << std::hex << request->Start_LBA 
+					<< std::dec << std::endl;
+			}
+
+			if (gnStartPrint == true)
+			{
+				std::cout << "Con: Read: REQ_C: "<< STAT_serviced_read_request_count  
+					<< " LBA: " << std::hex << request->Start_LBA 
+					<< " DE: " << (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) 
+					<< std::dec << std::endl;
+			}
+
+//			read_log_file << request->Arrival_time << " " << (Simulator->Time()) << "  " << (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) << " " << request->LBA_count << std::endl;
+//			read_log_file << (Simulator->Time() / SIM_TIME_TO_MICROSECONDS_COEFF)<< "  " << (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) << "  " << request->LBA_count << std::endl;
+			read_log_file << (Simulator->Time() / SIM_TIME_TO_MICROSECONDS_COEFF)<< "  " << (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) << "  " << request->LBA_count << " " << request->Start_LBA << " " << request->Arrival_time << " " << request->Enqueue_time<< std::endl;
+
+
+
 		}
 		else
 		{
@@ -279,6 +339,21 @@ namespace Host_Components
 			if (request_delay < STAT_min_request_delay_write)
 				STAT_min_request_delay_write = request_delay;
 			STAT_transferred_bytes_write += request->LBA_count * SECTOR_SIZE_IN_BYTE;
+
+			if (gnStartPrint == true)
+			{
+				snLongReadCount++;
+				std::cout << "Con: Write: REQ_C: " << STAT_serviced_write_request_count 
+					<< " LBA: " << std::hex << request->Start_LBA
+					<< " DE: " << (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) 
+					<< std::dec << std::endl;
+			}
+
+//			write_log_file << STAT_serviced_read_request_count << "\t" << (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) << "\t" << request->Start_LBA << "\t" << request->LBA_count << std::endl;
+//			write_log_file << request->Arrival_time << " " << (Simulator->Time()) << "  " << (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) << " " <<	request->LBA_count << std::endl;
+// 			write_log_file <<(Simulator->Time() / SIM_TIME_TO_MICROSECONDS_COEFF)<< "  " << (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) << "  " << request->LBA_count << std::endl;
+			write_log_file <<(Simulator->Time() / SIM_TIME_TO_MICROSECONDS_COEFF)<< "  " << (request_delay / SIM_TIME_TO_MICROSECONDS_COEFF) << "  " << request->LBA_count << " " << request->Start_LBA << " " << request->Arrival_time << " " << request->Enqueue_time<< std::endl;
+
 		}
 
 		delete request;
@@ -332,6 +407,29 @@ namespace Host_Components
 			}
 			progress_bar += "] ";
 			PRINT_MESSAGE(progress_bar << " " << progress << "% progress in " << ID() << std::endl)
+				
+#if (ACT_SIMULATION)
+			sim_time_type STD_read_time = gnACTLargeReadCount * (ONE_SECOND / (ACT_LARGE_DIV * ACT_MAG_COUNT) );
+			sim_time_type STD_write_time = gnACTLargeWriteCount * (ONE_SECOND / (ACT_LARGE_DIV * ACT_MAG_COUNT) );
+			bool bPrintStress = false;
+
+			if ( STD_read_time < Simulator->Time()  && (Simulator->Time() - STD_read_time) > ONE_SECOND )
+			{
+				std::cout << "  Stress Read: "  <<  Simulator->Time() - STD_read_time;
+				bPrintStress = true;
+			}
+			if ( STD_write_time < Simulator->Time() && (Simulator->Time() - STD_write_time) > ONE_SECOND )
+			{
+				std::cout << "  Stress Write: " <<  Simulator->Time() - STD_write_time;
+				bPrintStress = true;
+			}
+
+			if (bPrintStress == true)
+			{
+				std::cout << std::endl;
+			}		
+#endif 
+				
 			next_progress_step += 5;
 		}
 

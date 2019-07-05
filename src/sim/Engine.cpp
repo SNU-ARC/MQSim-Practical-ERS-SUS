@@ -2,6 +2,44 @@
 #include "Engine.h"
 #include "../utils/Logical_Address_Partitioning_Unit.h"
 
+size_t gnCurrentUserWriteIssueCount = 0;
+size_t gnUserPGMPageIssueCount = 0;
+size_t gnGCPGMPageIssueCount = 0;
+size_t gnONFI_PGM_CompleteCount = 0;
+size_t gnUserPageLockedCount = 0;
+size_t gnUserpageLockedCount_Mapper = 0;
+size_t gnUserpageLockedCount_Mapper_Read = 0;
+size_t gnUserPGMSkipCount = 0;
+size_t gnCacheEvictionPageCount = 0;
+bool gnStartPrint = false;
+size_t gnERSSuspendOffCount = 0;
+
+size_t gnErsSusToCount[20] = {0, };
+size_t gnERSSusCount = 0;
+size_t gnDefERSCount = 0;
+size_t gnTotalERSCount = 0;
+
+
+#if (ERS_CANCEL_ENABLE)
+	#if (ADAPTIVE_RPS_SCH_ENABLE)
+		bool READ_PRIO_SCH = true;
+	#endif
+#else
+	#if (ADAPTIVE_RPS_SCH_ENABLE)
+		bool READ_PRIO_SCH = false;	
+	#endif
+#endif
+
+unsigned int ERS_SUS_TO_Time_MS = 0;
+unsigned int ACT_MAG_COUNT = 0;
+
+sim_time_type gnACTLargeReadCount = 0;
+sim_time_type gnACTLargeWriteCount = 0;
+sim_time_type gnACTSmallReadCount = 0;
+
+
+
+
 namespace MQSimEngine
 {
 	Engine* Engine::_instance = NULL;
@@ -95,6 +133,11 @@ namespace MQSimEngine
 				delete consumed_event;
 			}
 			_EventList->Remove(minNode);
+
+			if(!_EventList -> Count)
+			{
+				std::cout << "The simlator engine is stop!\n";
+			}
 		}
 	}
 
@@ -110,6 +153,11 @@ namespace MQSimEngine
 
 	sim_time_type Engine::Time()
 	{
+/*
+		if ( _sim_time > 51910000000)
+			gnStartPrint = true;
+*/
+
 		return _sim_time;
 	}
 

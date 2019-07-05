@@ -8,10 +8,15 @@
 #include "../utils/StringTools.h"
 #include "../utils/Logical_Address_Partitioning_Unit.h"
 
+extern Host_System* gobjpHostSystem;
+extern Host_Components::PCIe_Link* gobjpPCIe;
+extern Host_Components::IO_Flow_Synthetic* gobjpWorkload;
+
 Host_System::Host_System(Host_Parameter_Set* parameters, bool preconditioning_required, SSD_Components::Host_Interface_Base* ssd_host_interface):
 	MQSimEngine::Sim_Object("Host"), preconditioning_required(preconditioning_required)
 {
 	Simulator->AddObject(this);
+	gobjpHostSystem = this;
 
 	//Create the main components of the host system
 	if (((SSD_Components::Host_Interface_NVMe*)ssd_host_interface)->GetType() == HostInterface_Types::SATA)
@@ -24,6 +29,7 @@ Host_System::Host_System(Host_Parameter_Set* parameters, bool preconditioning_re
 	this->PCIe_switch = new Host_Components::PCIe_Switch(this->Link, ssd_host_interface);
 	this->Link->Set_pcie_switch(this->PCIe_switch);
 	Simulator->AddObject(this->Link);
+	gobjpPCIe = (Host_Components::PCIe_Link*)(this->Link);
 
 	//Create IO flows
 	LHA_type address_range_per_flow = ssd_host_interface->Get_max_logical_sector_address() / parameters->IO_Flow_Definitions.size();
@@ -80,6 +86,7 @@ Host_System::Host_System(Host_Parameter_Set* parameters, bool preconditioning_re
 			throw "The specified IO flow type is not supported.\n";
 		}
 		Simulator->AddObject(io_flow);
+		gobjpWorkload = (Host_Components::IO_Flow_Synthetic*)io_flow;
 	}
 	this->PCIe_root_complex->Set_io_flows(&this->IO_flows);
 	if (((SSD_Components::Host_Interface_NVMe*)ssd_host_interface)->GetType() == HostInterface_Types::SATA)

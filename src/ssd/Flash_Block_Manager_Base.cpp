@@ -29,6 +29,8 @@ namespace SSD_Components
 						plane_manager[channelID][chipID][dieID][planeID].Invalid_pages_count = 0;
 						plane_manager[channelID][chipID][dieID][planeID].Ongoing_erase_operations.clear();
 						plane_manager[channelID][chipID][dieID][planeID].Blocks = new Block_Pool_Slot_Type[block_no_per_plane];
+
+						DebugPlanes[channelID][chipID][dieID][planeID] = &(plane_manager[channelID][chipID][dieID][planeID]);
 						for (unsigned int blockID = 0; blockID < block_no_per_plane; blockID++)//Initialize block pool for plane
 						{
 							plane_manager[channelID][chipID][dieID][planeID].Blocks[blockID].BlockID = blockID;

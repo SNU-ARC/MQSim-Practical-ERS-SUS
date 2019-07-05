@@ -33,6 +33,10 @@ namespace SSD_Components
 		virtual sim_time_type Expected_finish_time(NVM::FlashMemory::Flash_Chip* chip) = 0;
 		/// Provides communication between controller and NVM chips for a simple read/write/erase command.
 		virtual void Send_command_to_chip(std::list<NVM_Transaction_Flash*>& transactionList) = 0;
+
+		virtual bool Check_ERS_suspend_threshold(flash_channel_ID_type channe_id, flash_chip_ID_type chip_id, flash_die_ID_type die_id) = 0; 
+		virtual bool Check_PGM_suspend_threshold(flash_channel_ID_type channe_id, flash_chip_ID_type chip_id, flash_die_ID_type die_id) = 0; 
+
 		virtual void Change_flash_page_status_for_preconditioning(const NVM::FlashMemory::Physical_Page_Address& page_address, const LPA_type lpa) = 0;
 
 		typedef void(*TransactionServicedHandlerType) (NVM_Transaction_Flash*);

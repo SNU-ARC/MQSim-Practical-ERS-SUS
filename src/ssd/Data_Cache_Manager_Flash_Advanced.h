@@ -10,6 +10,9 @@
 #include "Data_Cache_Flash.h"
 #include "NVM_Transaction_Flash.h"
 
+static const size_t n_chip_buffers = 32;
+static const size_t chip_buffer_size = 2048;
+
 namespace SSD_Components
 {
 	/*
@@ -26,6 +29,19 @@ namespace SSD_Components
 			|     DRAM Data_Cache_Flash Main Data Space                   |   Back Pressure Space  | ---------->To the flash backend
 			 --------------------------------------------------|------------------------
 	*/
+	
+	typedef struct chip_buffer_type
+	{
+		uint32_t explicit_padding_for_32_byte_alignment;
+		uint32_t n_entries;
+		uint64_t n_total_transactions;
+
+		uint32_t next_transaction;
+		uint32_t next_insertion;
+
+		NVM_Transaction_Flash_WR *buf[chip_buffer_size];
+	}chip_buf;
+
 	class Data_Cache_Manager_Flash_Advanced : public Data_Cache_Manager_Base
 	{
 	public:
@@ -38,13 +54,18 @@ namespace SSD_Components
 		void Execute_simulator_event(MQSimEngine::Sim_Event* ev);
 		void Setup_triggers();
 		void Do_warmup(std::vector<Utils::Workload_Statistics*> workload_stats);
+	
+		//method to insert write buffer
+		void init_write_stream_buffer(uint32_t n_channels, uint32_t n_chips_per_channel, uint32_t n_planes_per_chip);
+
 	private:
 		NVM_PHY_ONFI * flash_controller;
 		unsigned int capacity_in_bytes, capacity_in_pages;
 		unsigned int sector_no_per_page;
 		Data_Cache_Flash** per_stream_cache;
 		bool memory_channel_is_busy;
-		
+	
+
 		void process_new_user_request(User_Request* user_request);
 		void write_to_destage_buffer(User_Request* user_request);//Used in the WRITE_CACHE and WRITE_READ_CACHE modes in which the DRAM space is used as a destage buffer
 		std::queue<Memory_Transfer_Info*>* dram_execution_queue;//The list of DRAM transfers that are waiting to be executed
@@ -59,6 +80,15 @@ namespace SSD_Components
 
 		static void handle_transaction_serviced_signal_from_PHY(NVM_Transaction_Flash* transaction);
 		void service_dram_access_request(Memory_Transfer_Info* request_info);
+		
+		uint32_t n_channels;
+		uint32_t n_chips_per_channel;
+		uint32_t n_planes_per_chip;
+
+		chip_buf chip_buffers[n_chip_buffers];
+		std::set<LPA_type> LPAs[n_chip_buffers];
+		std::queue <size_t> flush_order;
+
 	};
 }
 #endif // !DATA_CACHE_MANAGER_FLASH_ADVANCED_H

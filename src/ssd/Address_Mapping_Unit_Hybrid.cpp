@@ -19,7 +19,7 @@ namespace SSD_Components
 	int Address_Mapping_Unit_Hybrid::Bring_to_CMT_for_preconditioning(stream_id_type stream_id, LPA_type lpa) { return 0; }
 	unsigned int Address_Mapping_Unit_Hybrid::Get_cmt_capacity() { return 0; }
 	unsigned int Address_Mapping_Unit_Hybrid::Get_current_cmt_occupancy_for_stream(stream_id_type stream_id) { return 0; }
-	void Address_Mapping_Unit_Hybrid::Translate_lpa_to_ppa_and_dispatch(const std::list<NVM_Transaction*>& transaction_list) {}
+	unsigned int Address_Mapping_Unit_Hybrid::Translate_lpa_to_ppa_and_dispatch(const std::list<NVM_Transaction*>& transaction_list, bool bRead) { return 0; }
 	void Address_Mapping_Unit_Hybrid::Get_data_mapping_info_for_gc(const stream_id_type stream_id, const LPA_type lpa, PPA_type& ppa, page_status_type& page_state) {}
 	void Address_Mapping_Unit_Hybrid::Get_translation_mapping_info_for_gc(const stream_id_type stream_id, const MVPN_type mvpn, MPPN_type& mppa, sim_time_type& timestamp) {}
 
@@ -35,6 +35,16 @@ namespace SSD_Components
 	LPA_type Address_Mapping_Unit_Hybrid::Get_logical_pages_count(stream_id_type stream_id)
 	{
 		return 0;
+	}
+
+	bool Address_Mapping_Unit_Hybrid::Check_L2P_exists(stream_id_type stream_id, LPA_type lpa)
+	{
+		return true;
+	}
+
+	bool Address_Mapping_Unit_Hybrid::Check_LPA_locked(stream_id_type stream_id, LPA_type LPA)
+	{
+		return false;
 	}
 
 	void Address_Mapping_Unit_Hybrid::Convert_ppa_to_address(const PPA_type ppa, NVM::FlashMemory::Physical_Page_Address& address) {}

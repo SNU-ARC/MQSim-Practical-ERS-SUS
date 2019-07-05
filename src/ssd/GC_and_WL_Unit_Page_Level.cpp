@@ -177,6 +177,10 @@ namespace SSD_Components
 
 				tsu->Schedule();
 			}
+			else
+			{
+//				std::cout << gc_candidate_address.ChannelID << " : " << gc_candidate_address.ChipID << " : " << gc_candidate_address.BlockID << std::endl;
+			}
 		}
 	}
 }

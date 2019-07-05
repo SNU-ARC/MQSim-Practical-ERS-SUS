@@ -55,6 +55,16 @@ namespace Host_Components
 		return request;
 	}
 
+
+	
+	Host_IO_Request* IO_Flow_Trace_Based::Generate_next_request(bool bGenRead){
+		return Generate_next_request();
+	}
+
+	Host_IO_Request* IO_Flow_Trace_Based::Generate_next_request(bool bGenRead, unsigned int nLBA_count){
+		return Generate_next_request();
+	}
+
 	void IO_Flow_Trace_Based::NVMe_consume_io_request(Completion_Queue_Entry* io_request)
 	{
 		IO_Flow_Base::NVMe_consume_io_request(io_request);
@@ -66,6 +76,7 @@ namespace Host_Components
 		IO_Flow_Base::SATA_consume_io_request(io_request);
 	}
 
+#pragma optimize("t",on)
 	void IO_Flow_Trace_Based::Start_simulation()
 	{
 		IO_Flow_Base::Start_simulation();
@@ -276,4 +287,6 @@ namespace Host_Components
 		stats.Initial_occupancy_ratio = initial_occupancy_ratio;
 		stats.Replay_no = total_replay_no;
 	}
+
+#pragma optimize("t",off)
 }
